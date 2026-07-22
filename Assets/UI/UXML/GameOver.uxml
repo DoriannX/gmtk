@@ -1,0 +1,8 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <Style src="../USS/Common.uss" />
+    <ui:VisualElement name="gameover-panel" class="screen-root">
+        <ui:Label text="Game Over" name="gameover-label" class="title" />
+        <ui:Button name="retry-button" text="Retry" class="menu-button" />
+        <ui:Button name="menu-button" text="Main Menu" class="menu-button" />
+    </ui:VisualElement>
+</ui:UXML>

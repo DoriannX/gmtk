@@ -1,0 +1,8 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <Style src="../USS/Common.uss" />
+    <ui:VisualElement name="pause-panel" class="screen-root">
+        <ui:Label text="Paused" name="pause-label" class="title" />
+        <ui:Button name="resume-button" text="Resume" class="menu-button" />
+        <ui:Button name="quit-to-menu-button" text="Quit to Menu" class="menu-button" />
+    </ui:VisualElement>
+</ui:UXML>

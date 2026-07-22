@@ -1,0 +1,8 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <Style src="../USS/Common.uss" />
+    <ui:VisualElement name="main-menu-root" class="screen-root">
+        <ui:Label text="GAME TITLE" name="title-label" class="title" />
+        <ui:Button name="play-button" text="Play" class="menu-button" />
+        <ui:Button name="quit-button" text="Quit" class="menu-button" />
+    </ui:VisualElement>
+</ui:UXML>

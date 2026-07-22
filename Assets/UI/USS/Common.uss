@@ -1,0 +1,22 @@
+.screen-root {
+    flex-grow: 1;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.title {
+    font-size: 36px;
+    -unity-font-style: bold;
+    color: rgb(240, 240, 240);
+    margin-bottom: 24px;
+    -unity-text-align: middle-center;
+}
+
+.menu-button {
+    width: 220px;
+    padding: 10px 16px;
+    margin: 6px;
+    font-size: 18px;
+    -unity-text-align: middle-center;
+}

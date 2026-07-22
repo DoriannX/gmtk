@@ -36,10 +36,3 @@ Thumbs.db
 
 # Crashlytics
 crashlytics-build.properties
-
-# Packages (keep manifest, ignore local cache if any)
-/[Pp]ackages/
-!/Packages/manifest.json
-!/Packages/packages-lock.json
-
-# BMAD local output not meant for sharing (keep planning/impl artifacts tracked)

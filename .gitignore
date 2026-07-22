@@ -1,0 +1,45 @@
+# Unity generated
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+
+# Asset meta backups
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Rider/VS
+.idea/
+.vs/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Crashlytics
+crashlytics-build.properties
+
+# Packages (keep manifest, ignore local cache if any)
+/[Pp]ackages/
+!/Packages/manifest.json
+!/Packages/packages-lock.json
+
+# BMAD local output not meant for sharing (keep planning/impl artifacts tracked)

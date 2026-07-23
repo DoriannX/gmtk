@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
+using Unity.AI.Navigation;
 
 namespace Gameplay.City
 {
@@ -37,6 +39,10 @@ namespace Gameplay.City
 
         private Shader toonShader;
         private readonly Dictionary<Material, Material> toonCache = new Dictionary<Material, Material>();
+        // Emprises XZ (monde) des batiments deja poses -> anti "batiment dans un
+        // batiment" : les rangees de cellules/coins voisins peuvent se chevaucher, on
+        // recale en detruisant tout nouveau venu qui empiete trop sur un existant.
+        private readonly List<Bounds> placedBuildings = new List<Bounds>();
 
         [Header("Vie & rampes")]
         [SerializeField] private bool placeRamps = true;
@@ -48,7 +54,25 @@ namespace Gameplay.City
         private const string RampPath = "Assets/Prefabs/Ramp.prefab";
         private const string TrafficPath = "Assets/Prefabs/TrafficCar.prefab";
         private const string PedPath = "Assets/Prefabs/Pedestrian.prefab";
+        // Variantes de pietons : une prise au hasard par instance (deterministe via hash de cellule).
+        private static readonly string[] PedVariants =
+        {
+            "Assets/Prefabs/Pedestrians/Pedestrian_Business.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Capguy.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Granny.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Hipster.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Kid.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Oldman.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Sunhat.prefab",
+            "Assets/Prefabs/Pedestrians/Pedestrian_Woman.prefab",
+        };
         private const string PigeonPath = "Assets/Prefabs/Pigeon.prefab";
+
+        [Header("Trottoirs & NavMesh pietons")]
+        [Tooltip("Genere le reseau marchable (trottoirs + passages aux carrefours) et bake le NavMesh au runtime.")]
+        [SerializeField] private bool buildSidewalks = true;
+        [Tooltip("Largeur d'un trottoir (part de la cellule). 0.26 ~= 2.9u pour cellSize 11.")]
+        [SerializeField, Range(0.12f, 0.45f)] private float sidewalkWidth = 0.26f;
 
         [Header("Organicite")]
         [Tooltip("Familles selon la zone (centre = tours, peripherie = maisons basses).")]
@@ -90,6 +114,7 @@ namespace Gameplay.City
 
             toonShader = Shader.Find("GMTK/ToonLit");
             toonCache.Clear();
+            placedBuildings.Clear();
 
             float cs = grid.CellSize;
             int w = grid.Width, h = grid.Height;
@@ -119,8 +144,127 @@ namespace Gameplay.City
                     if (grid.At(x, y) == CellType.Block)
                         PlaceBuilding(root, grid, x, y, cs);
 
-            // 3) Vie : rampes sur segments droits + trafic + pietons.
+            // 3) Reseau pieton (trottoirs + passages) + bake NavMesh. AVANT SpawnLife
+            //    pour que les pietons instancies se posent sur un NavMesh deja pret.
+            if (buildSidewalks) BuildSidewalks(root, grid, cs);
+
+            // 4) Vie : rampes sur segments droits + trafic + pietons.
             SpawnLife(root, grid, cs);
+        }
+
+        // --- Reseau pieton (trottoirs + passages) ------------------------------
+
+        // Genere une surface marchable INVISIBLE (mesh plat) que le NavMesh bake :
+        //   - trottoirs : bandes le long des bords de cellule route qui touchent un
+        //     pate/bord de map (curb) -> anneau autour de chaque bloc ;
+        //   - passages  : dalle pleine aux carrefours/T (>=3 routes voisines) ->
+        //     relie les trottoirs opposes, les pietons traversent la.
+        // Le mesh combine est pose sous un NavMeshSurface qui bake au runtime
+        // (RuntimeNavBaker) : rien a serialiser, tout derive de la grille.
+        private void BuildSidewalks(Transform root, CityGrid g, float cs)
+        {
+            var verts = new List<Vector3>();
+            var tris = new List<int>();
+            float half = cs * 0.5f;
+            float sw = cs * sidewalkWidth;
+            float curb = half - sw * 0.5f;      // distance centre cellule -> axe du trottoir
+            const float y = 0.03f;              // legerement au-dessus de la route
+
+            for (int cy = 0; cy < g.Height; cy++)
+                for (int cx = 0; cx < g.Width; cx++)
+                {
+                    if (g.At(cx, cy) != CellType.Road) continue;
+                    Vector3 c = g.CellToWorld(cx, cy); c.y = y;
+
+                    int bits = 0;
+                    bool[] roadSide = new bool[4];
+                    for (int d = 0; d < 4; d++)
+                    {
+                        roadSide[d] = IsRoad(g, cx + DX[d], cy + DYcell[d]);
+                        if (roadSide[d]) bits++;
+                    }
+
+                    // Trottoir sur chaque bord NON bordé par une route (= touche un pate/bord).
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (roadSide[d]) continue;
+                        Vector3 n = new Vector3(DX[d], 0f, -DYcell[d]); // DYcell: row-1=+Z
+                        Vector3 center = c + n * curb;
+                        // bande le long du bord : epaisse dans l'axe n, longue perpendiculairement
+                        float sx = Mathf.Abs(n.x) > 0.5f ? sw : cs;
+                        float sz = Mathf.Abs(n.z) > 0.5f ? sw : cs;
+                        AddQuad(verts, tris, center, sx, sz);
+                    }
+
+                    // Passage pieton : carrefour/T -> dalle pleine (relie les trottoirs).
+                    if (bits >= 3) AddQuad(verts, tris, c, cs, cs);
+                }
+
+            if (verts.Count == 0) return;
+
+            var mesh = new Mesh { name = "SidewalkNav" };
+            mesh.indexFormat = verts.Count > 65000
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            var surfGo = new GameObject("Sidewalks");
+            surfGo.transform.SetParent(root, false);
+
+            var meshGo = new GameObject("SidewalkMesh");
+            meshGo.transform.SetParent(surfGo.transform, false);
+            meshGo.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = meshGo.AddComponent<MeshRenderer>();
+            // Le bake RenderMeshes IGNORE les renderers desactives -> on le laisse ACTIF
+            // mais avec un materiau totalement transparent (alpha 0) : source de bake
+            // visible pour le NavMesh, invisible a l'ecran, cout draw negligeable.
+            mr.sharedMaterial = InvisibleMat();
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            mr.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+
+            var surface = surfGo.AddComponent<NavMeshSurface>();
+            surface.collectObjects = CollectObjects.Children;
+            surface.useGeometry = NavMeshCollectGeometry.RenderMeshes;
+            surface.agentTypeID = 0; // Humanoid par defaut (radius bake 0.5 ; agent pieton plus petit)
+            surface.BuildNavMesh(); // bake immediat en editeur (preview) ; RuntimeNavBaker re-bake au play
+
+            surfGo.AddComponent<RuntimeNavBaker>();
+        }
+
+        // Materiau 100% transparent pour la surface de bake (invisible mais rendue).
+        private Material invisibleMat;
+        private Material InvisibleMat()
+        {
+            if (invisibleMat != null) return invisibleMat;
+            Shader s = Shader.Find("Universal Render Pipeline/Unlit");
+            if (s == null) s = Shader.Find("Sprites/Default");
+            var m = new Material(s) { name = "SidewalkInvisible" };
+            m.SetColor("_BaseColor", new Color(0f, 0f, 0f, 0f));
+            m.SetColor("_Color", new Color(0f, 0f, 0f, 0f));
+            if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);         // Transparent (URP)
+            m.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            m.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            m.SetInt("_ZWrite", 0);
+            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            invisibleMat = m;
+            return m;
+        }
+
+        // Ajoute un quad horizontal (normale +Y) centre sur `center`, taille sx*sz.
+        private static void AddQuad(List<Vector3> v, List<int> t, Vector3 center, float sx, float sz)
+        {
+            int b = v.Count;
+            float hx = sx * 0.5f, hz = sz * 0.5f;
+            v.Add(center + new Vector3(-hx, 0f, -hz));
+            v.Add(center + new Vector3(hx, 0f, -hz));
+            v.Add(center + new Vector3(hx, 0f, hz));
+            v.Add(center + new Vector3(-hx, 0f, hz));
+            t.Add(b); t.Add(b + 2); t.Add(b + 1);
+            t.Add(b); t.Add(b + 3); t.Add(b + 2);
         }
 
         // --- Routes -------------------------------------------------------------
@@ -217,7 +361,7 @@ namespace Gameplay.City
             Vector3 perp = new Vector3(D.z, 0f, -D.x);   // axe le long du bord
             Vector3 edge = c + D * (cs * 0.5f);          // frontiere cellule/rue
             const float sidewalk = 0.4f;
-            float half = cs * 0.48f;                     // ~96% du bord (dense, coins juste ouverts)
+            float half = cs * 0.44f;                     // coins ouverts (ruelles) -> les rangees perpendiculaires ne se croisent pas
             float cursor = -half;
             int idx = 0;
             while (cursor < half && idx < 10)
@@ -240,7 +384,30 @@ namespace Gameplay.City
                 Vector3 pos = edge - D * (footprint * 0.5f + sidewalk) + perp * along;
                 go.transform.localPosition = new Vector3(pos.x, go.transform.localPosition.y, pos.z);
                 go.transform.localRotation = Quaternion.Euler(0f, yaw + buildingFront + ry, 0f);
+
+                // Anti-chevauchement : si ce batiment empiete trop sur un deja pose
+                // (coin partage, rangee voisine), on le jette -> jamais de batiment
+                // dans un batiment. Le trou laisse fait une ruelle credible.
+                Bounds wb = Fit(go);
+                if (OverlapsPlaced(wb)) { DestroyImmediate(go); continue; }
+                placedBuildings.Add(wb);
             }
+        }
+
+        // Vrai si l'emprise XZ `b` recouvre > 20% de la plus petite emprise deja posee.
+        private bool OverlapsPlaced(Bounds b)
+        {
+            float aArea = b.size.x * b.size.z;
+            foreach (Bounds e in placedBuildings)
+            {
+                float ox = Mathf.Min(b.max.x, e.max.x) - Mathf.Max(b.min.x, e.min.x);
+                float oz = Mathf.Min(b.max.z, e.max.z) - Mathf.Max(b.min.z, e.min.z);
+                if (ox <= 0f || oz <= 0f) continue;
+                float inter = ox * oz;
+                float smaller = Mathf.Min(aArea, e.size.x * e.size.z);
+                if (smaller > 0.0001f && inter > smaller * 0.2f) return true;
+            }
+            return false;
         }
 
         // Nb d'etages par famille (les tours Modern hautes, townhouses basses).
@@ -274,9 +441,13 @@ namespace Gameplay.City
             float yBase = -(sb.center.y - sb.size.y * 0.5f);
             go.transform.localPosition = new Vector3(0f, yBase, 0f);
 
+            // Collider mur : box tendue sur l'emprise du mesh principal (Veg exclue),
+            // en espace local (taille monde / scale). Statique -> immobile, source
+            // fiable pour le wall-ride (WallSlide) et pas de tunneling voiture.
             BoxCollider box = go.AddComponent<BoxCollider>();
             box.center = go.transform.InverseTransformPoint(sb.center);
             box.size = sb.size / Mathf.Max(0.0001f, scale);
+            go.isStatic = true;
 
             go.name = family + variant;
             return go;
@@ -322,7 +493,7 @@ namespace Gameplay.City
                 }
 
             SpawnOnRoads(root, g, roads, TrafficPath, trafficCount, 0.5f, true, cs);   // voitures
-            SpawnOnRoads(root, g, roads, PedPath, pedestrianCount, 0f, false, cs);     // pietons (trottoir)
+            SpawnOnRoads(root, g, roads, PedPath, pedestrianCount, 0f, false, cs, PedVariants); // pietons (trottoir, variantes)
 
             // Pigeons : eparpilles sur toute l'emprise (ils volent/sautillent seuls).
             SpawnScatter(root, g, PigeonPath, pigeonCount, 0.2f);
@@ -350,7 +521,7 @@ namespace Gameplay.City
 
         // Repartit `count` instances sur les cellules route (pas regulier, deterministe).
         private void SpawnOnRoads(Transform root, CityGrid g, List<Vector2Int> roads,
-            string path, int count, float y, bool car, float cs)
+            string path, int count, float y, bool car, float cs, string[] variants = null)
         {
             if (count <= 0 || roads.Count == 0) return;
             int step = Mathf.Max(1, roads.Count / count);
@@ -358,25 +529,61 @@ namespace Gameplay.City
             for (int i = 0; i < roads.Count && placed < count; i += step)
             {
                 Vector2Int p = roads[i];
-                GameObject go = InstancePrefab(path);
+                uint hh = (uint)(p.x * 73856093) ^ (uint)(p.y * 19349663) ^ (uint)(placed * 83492791);
+                // variantes : une prise au hasard (deterministe) par instance, sinon prefab unique
+                string prefab = (variants != null && variants.Length > 0)
+                    ? variants[hh % (uint)variants.Length]
+                    : path;
+                GameObject go = InstancePrefab(prefab);
                 if (go == null) return;
                 Vector3 c = g.CellToWorld(p.x, p.y);
-                uint hh = (uint)(p.x * 73856093) ^ (uint)(p.y * 19349663) ^ (uint)(placed * 83492791);
                 float ox = 0f, oz = 0f;
-                if (!car) // pieton pousse vers un bord (trottoir)
+                if (car)
                 {
+                    // Garee le long d'un trottoir : cherche un bord borde par un pate
+                    // (curb), pousse la voiture contre ce bord et l'oriente dans l'axe
+                    // de la rue -> accessible au pieton qui vient du trottoir voisin.
+                    ParkAtCurb(g, p, cs, hh, out ox, out oz, out float yaw);
+                    go.transform.SetParent(root, false);
+                    go.transform.localPosition = new Vector3(c.x + ox, y, c.z + oz);
+                    go.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+                }
+                else
+                {
+                    // Pieton pousse vers un bord (trottoir). NE PAS toucher la rotation ->
+                    // Pedestrian.cs capture la rotation d'import (baseTilt) au Start.
                     ox = ((hh & 1) == 0 ? -1f : 1f) * cs * 0.42f;
                     oz = (((hh >> 1) & 1) == 0 ? -1f : 1f) * cs * 0.42f;
+                    go.transform.SetParent(root, false);
+                    go.transform.localPosition = new Vector3(c.x + ox, y, c.z + oz);
                 }
-                go.transform.SetParent(root, false);
-                go.transform.localPosition = new Vector3(c.x + ox, y, c.z + oz);
-                // Voitures : yaw aleatoire. Pietons : NE PAS toucher la rotation ->
-                // Pedestrian.cs capture la rotation d'import (baseTilt) au Start ; la
-                // forcer les fait marcher de travers.
-                if (car) go.transform.localRotation = Quaternion.Euler(0f, (hh % 4) * 90f, 0f);
                 go.name = (car ? "TrafficCar_" : "Pedestrian_") + placed;
                 placed++;
             }
+        }
+
+        // Gare une voiture contre un trottoir : choisit un bord de la cellule route
+        // borde par un pate (curb), decale la voiture vers ce bord (~0.28 cellule ->
+        // reste sur la chaussee mais colle au trottoir) et l'aligne dans l'axe de la
+        // rue. Sans curb (plein carrefour) -> centre + yaw pseudo-aleatoire.
+        private void ParkAtCurb(CityGrid g, Vector2Int p, float cs, uint hh,
+            out float ox, out float oz, out float yaw)
+        {
+            const float park = 0.28f;
+            // ordre de depart varie par hash -> les voitures ne se collent pas toutes au meme bord
+            int start = (int)(hh % 4u);
+            for (int k = 0; k < 4; k++)
+            {
+                int d = (start + k) % 4;
+                if (IsRoad(g, p.x + DX[d], p.y + DYcell[d])) continue; // ce bord touche une route -> pas un curb
+                ox = DX[d] * cs * park;
+                oz = -DYcell[d] * cs * park;                 // row-1 = +Z
+                // curb en X (E/O) -> rue N-S -> yaw 0 ; curb en Z (N/S) -> rue E-O -> yaw 90
+                yaw = DX[d] != 0 ? 0f : 90f;
+                return;
+            }
+            ox = oz = 0f;
+            yaw = (hh % 4u) * 90f;
         }
 
         private GameObject InstancePrefab(string path)

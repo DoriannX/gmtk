@@ -69,8 +69,8 @@ namespace Gameplay
 
         private void FlapWings(Transform bird, float period, float phase)
         {
-            var wl = bird.Find("WingL");
-            var wr = bird.Find("WingR");
+            var wl = ProcBird.FindDeep(bird, "WingL");
+            var wr = ProcBird.FindDeep(bird, "WingR");
             if (wl == null || wr == null) return; // prefab sans ailes nommees : tant pis
             tweens.Add(wl.DOLocalRotate(new Vector3(0, 0, 35f), period)
                 .SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetDelay(phase));

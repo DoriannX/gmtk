@@ -23,6 +23,8 @@ namespace Gameplay
         [SerializeField] private Vector2 flapPeriod = new Vector2(0.4f, 0.7f);
 
         [Header("Look")]
+        [Tooltip("Optionnel. Vide = silhouette procedurale (ProcBird). Rempli = ce modele (ex: SkyBird).")]
+        [SerializeField] private GameObject birdPrefab;
         [SerializeField] private float birdScale = 1.6f;
         [SerializeField] private Color silhouette = new Color(0.18f, 0.18f, 0.22f);
 
@@ -33,13 +35,14 @@ namespace Gameplay
 
         private void Start()
         {
-            mat = new Material(Shader.Find("Universal Render Pipeline/Lit")) { color = silhouette };
+            if (birdPrefab == null)
+                mat = new Material(Shader.Find("Universal Render Pipeline/Lit")) { color = silhouette };
             for (int i = 0; i < count; i++) Spawn(i);
         }
 
         private void Spawn(int i)
         {
-            var go = ProcBird.Build(mat);
+            var go = birdPrefab != null ? Instantiate(birdPrefab) : ProcBird.Build(mat);
             go.name = $"AmbientBird{i}";
             go.transform.SetParent(transform, false);
             go.transform.localScale = Vector3.one * birdScale;
@@ -57,8 +60,8 @@ namespace Gameplay
             });
 
             float fp = Random.Range(flapPeriod.x, flapPeriod.y);
-            var wl = go.transform.Find("WingL");
-            var wr = go.transform.Find("WingR");
+            var wl = ProcBird.FindDeep(go.transform, "WingL");
+            var wr = ProcBird.FindDeep(go.transform, "WingR");
             if (wl != null) tweens.Add(wl.DOLocalRotate(new Vector3(0, 0, 32f), fp).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetDelay(i * 0.13f));
             if (wr != null) tweens.Add(wr.DOLocalRotate(new Vector3(0, 0, -32f), fp).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetDelay(i * 0.13f));
         }

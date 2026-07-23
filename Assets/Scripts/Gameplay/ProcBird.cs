@@ -15,6 +15,15 @@ namespace Gameplay
             return root;
         }
 
+        // Cherche une piece par nom en profondeur (les modeles FBX imbriquent
+        // souvent WingL/WingR sous un "Body"). Null tolere.
+        public static Transform FindDeep(Transform root, string n)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                if (t.name == n) return t;
+            return null;
+        }
+
         private static void Wing(Transform parent, string n, float sign, Material mat)
         {
             var pivot = new GameObject(n).transform;

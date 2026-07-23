@@ -84,5 +84,20 @@ namespace Gameplay.City
             float wz = ((Height - 1) * 0.5f - y) * cellSize;
             return new Vector3(wx, 0f, wz);
         }
+
+        // Inverse de CellToWorld : cellule contenant un point (espace local grille).
+        // Hors grille -> clamp aux bords (pas d'exception).
+        public void WorldToCell(Vector3 local, out int x, out int y)
+        {
+            x = Mathf.RoundToInt(local.x / cellSize + (Width - 1) * 0.5f);
+            y = Mathf.RoundToInt((Height - 1) * 0.5f - local.z / cellSize);
+        }
+
+        // Type de la cellule contenant un point (espace local grille).
+        public CellType TypeAtLocal(Vector3 local)
+        {
+            WorldToCell(local, out int x, out int y);
+            return At(x, y);
+        }
     }
 }

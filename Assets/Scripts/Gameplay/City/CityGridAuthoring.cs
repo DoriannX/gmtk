@@ -19,6 +19,34 @@ namespace Gameplay.City
 
         public CityGrid Grid => grid;
 
+        // Acces rapide pour l'IA des pietons (evite un FindObject par frame).
+        public static CityGridAuthoring Active { get; private set; }
+        private void OnEnable() { if (Application.isPlaying) Active = this; }
+        private void OnDisable() { if (Active == this) Active = null; }
+
+        // Type de la cellule sous un point MONDE (convertit via ce transform).
+        public CellType CellTypeAtWorld(Vector3 world)
+            => grid == null ? CellType.Block : grid.TypeAtLocal(transform.InverseTransformPoint(world));
+
+        public bool IsRoadAtWorld(Vector3 world) => CellTypeAtWorld(world) == CellType.Road;
+
+        public float CellSize => grid != null ? grid.CellSize : 0f;
+
+        // Le point est-il sur la CHAUSSEE (bande centrale d'une cellule route = voie
+        // des voitures / passage), par opposition au trottoir ? Les trottoirs vivent
+        // sur les BORDS d'une cellule route ; le type de cellule seul ne suffit donc
+        // pas. On teste l'ecart au centre de la cellule : < laneHalf = expose.
+        public bool IsOnRoadway(Vector3 world, float laneHalf)
+        {
+            if (grid == null) return false;
+            Vector3 local = transform.InverseTransformPoint(world);
+            grid.WorldToCell(local, out int x, out int y);
+            if (grid.At(x, y) != CellType.Road) return false;
+            Vector3 c = grid.CellToWorld(x, y);
+            float ox = Mathf.Abs(local.x - c.x), oz = Mathf.Abs(local.z - c.z);
+            return Mathf.Max(ox, oz) < laneHalf;
+        }
+
         private void OnDrawGizmos()
         {
             if (!drawGizmos || grid == null) return;

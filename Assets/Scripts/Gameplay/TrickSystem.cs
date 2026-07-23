@@ -1,0 +1,181 @@
+using UnityEngine;
+
+namespace Gameplay
+{
+    // Detection de figures facon Forza poussee cartoon, EN TEMPS REEL. Pendant un
+    // saut, chaque axe montre un slap live qui ESCALADE au fil des tours
+    // (FLIP -> DOUBLE FLIP -> TRIPLE -> QUAD -> MONSTER). A l'atterrissage :
+    //  - sur les roues : le saut est valide -> score * multiplicateur de chaine ;
+    //  - sur le toit : RATE ! -> chaine perdue.
+    // La chaine se banque apres un court delai au sol sans nouvelle figure.
+    [RequireComponent(typeof(ArcadeCarController))]
+    public class TrickSystem : MonoBehaviour
+    {
+        [SerializeField] private float turnPerTrick = 320f;   // deg par tour valide (< 360 = indulgent)
+        [SerializeField] private float uprightDot = 0.5f;     // up.monde mini pour "sur les roues"
+        [SerializeField] private float comboWindow = 2.6f;    // temps au sol sans figure avant de banquer
+        [SerializeField] private float bigAirTime = 0.9f;     // airtime mini pour bonus GROS SAUT
+        [SerializeField] private float driftMinTime = 0.7f;   // duree mini de glisse pour un DRIFT
+        [SerializeField] private int maxMultiplier = 10;
+
+        [Header("Points de base")]
+        [SerializeField] private int spinPts = 250;
+        [SerializeField] private int flipPts = 450;
+        [SerializeField] private int bigAirPtsPerSec = 260;
+
+        private static readonly Color SpinCol = new Color(0.35f, 0.8f, 1f);
+        private static readonly Color FlipCol = new Color(1f, 0.55f, 0.2f);
+
+        private ArcadeCarController car;
+        private TrickHud hud;
+
+        private bool airborne;
+        private float airTime;
+        private int shownSpins, shownFlips;
+
+        private float driftTime, driftAccum;
+
+        private int chainScore, comboCount;
+        private float window;
+        public int Total { get; private set; }
+
+        private void Awake()
+        {
+            car = GetComponent<ArcadeCarController>();
+            hud = GetComponent<TrickHud>();
+            if (hud == null) hud = gameObject.AddComponent<TrickHud>();
+        }
+
+        private void Update()
+        {
+            float dt = Time.deltaTime;
+            if (!car.Grounded)
+            {
+                if (!airborne) BeginAir();
+                airTime += dt;
+                UpdateLive();
+            }
+            else
+            {
+                if (airborne) Land();
+                HandleDrift(dt);
+                if (chainScore > 0)
+                {
+                    window -= dt;
+                    if (window <= 0f) Bank();
+                }
+            }
+        }
+
+        private void BeginAir()
+        {
+            airborne = true;
+            airTime = 0f;
+            shownSpins = shownFlips = 0;
+        }
+
+        // Affichage temps reel : des qu'un tour de plus est boucle, le slap escalade.
+        private void UpdateLive()
+        {
+            int spins = Mathf.FloorToInt(Mathf.Abs(car.AirSpinDeg) / turnPerTrick);
+            int flips = Mathf.FloorToInt(Mathf.Abs(car.AirFlipDeg) / turnPerTrick);
+            if (spins >= 1 && spins != shownSpins) { shownSpins = spins; hud.SetLive("spin", SpinLabel(spins, car.AirSpinDeg), SpinCol, true); }
+            if (flips >= 1 && flips != shownFlips) { shownFlips = flips; hud.SetLive("flip", FlipLabel(flips, car.AirFlipDeg), FlipCol, true); }
+        }
+
+        private void Land()
+        {
+            airborne = false;
+            hud.ClearLive();
+
+            int spins = Mathf.FloorToInt(Mathf.Abs(car.AirSpinDeg) / turnPerTrick);
+            int flips = Mathf.FloorToInt(Mathf.Abs(car.AirFlipDeg) / turnPerTrick);
+            bool bigAir = airTime > bigAirTime;
+
+            // Pas sur les roues apres un VRAI saut -> RATE, chaine perdue. Independant
+            // d'une figure complete : un demi-flip qui finit sur la tete est un crash,
+            // pas un "gros saut". airTime mini -> ignore les micro-bosses de suspension.
+            if (car.LandUprightDot < uprightDot && airTime > 0.25f)
+            {
+                hud.Wasted();
+                ResetChain();
+                return;
+            }
+
+            int jump = spins * spinPts + flips * flipPts;
+            if (bigAir) jump += Mathf.RoundToInt(airTime * bigAirPtsPerSec);
+            if (jump <= 0) return; // simple saut sans rien : pas de score
+
+            AwardChain(Summary(spins, flips, bigAir, car.AirSpinDeg, car.AirFlipDeg), jump, true);
+        }
+
+        private void HandleDrift(float dt)
+        {
+            if (car.Drifting && car.Speed > 6f)
+            {
+                driftTime += dt;
+                driftAccum += car.Speed * dt;
+            }
+            else if (driftTime > 0f)
+            {
+                if (driftTime >= driftMinTime)
+                    AwardChain("DRIFT", Mathf.RoundToInt(driftAccum * 3f));
+                driftTime = 0f; driftAccum = 0f;
+            }
+        }
+
+        private void AwardChain(string label, int basePts, bool landed = false)
+        {
+            comboCount++;
+            int mult = Mathf.Clamp(comboCount, 1, maxMultiplier);
+            int pts = basePts * mult;
+            chainScore += pts;
+            window = comboWindow;
+            hud.ScorePop(label, pts, mult, landed);
+        }
+
+        private void Bank()
+        {
+            Total += chainScore;
+            // "CHAINE" seulement pour un VRAI enchainement (2+ figures/drifts). Une
+            // seule figure : le tampon ✓ a deja montre le score -> banque en silence,
+            // pas de second texte redondant.
+            if (comboCount >= 2) hud.Bank(chainScore, comboCount);
+            ResetChain();
+        }
+
+        private void ResetChain()
+        {
+            chainScore = 0; comboCount = 0; window = 0f;
+        }
+
+        private static string Tier(string basic, int n)
+        {
+            switch (n)
+            {
+                case 1: return basic;
+                case 2: return "DOUBLE " + basic;
+                case 3: return "TRIPLE " + basic;
+                case 4: return "QUAD " + basic;
+                default: return "MONSTER " + basic;
+            }
+        }
+
+        // Flip : signe du pitch cumule = sens. >0 (touche avant/W) = FRONT FLIP,
+        // <0 (marche arriere/S) = BACKFLIP. Escalade DOUBLE/TRIPLE/...
+        private static string FlipLabel(int n, float signedDeg)
+            => Tier(signedDeg >= 0f ? "FRONT FLIP" : "BACKFLIP", n);
+
+        // Spin : yaw a plat. Sens indique par une fleche (gauche/droite).
+        private static string SpinLabel(int n, float signedDeg)
+            => Tier((signedDeg >= 0f ? "SPIN >" : "< SPIN"), n);
+
+        // Titre du saut : la figure dominante (avec son sens).
+        private static string Summary(int spins, int flips, bool bigAir, float spinDeg, float flipDeg)
+        {
+            if (flips >= spins && flips >= 1) return FlipLabel(flips, flipDeg);
+            if (spins >= 1) return SpinLabel(spins, spinDeg);
+            return "GROS SAUT";
+        }
+    }
+}

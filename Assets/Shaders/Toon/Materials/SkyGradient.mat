@@ -1,0 +1,67 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SkyGradient
+  m_Shader: {fileID: 4800000, guid: c584d246520503044a66fba40bcee739, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _BandCount: 4
+    - _BandSharp: 12
+    - _CloudBodyCut: 0.12
+    - _CloudCount: 3
+    - _CloudDensity: 0.46
+    - _CloudInk: 0.05
+    - _CloudOpacity: 0.9
+    - _CloudScale: 1.6
+    - _CloudSharp: 14
+    - _CloudSoft: 0.06
+    - _CloudSpeed: 0.02
+    - _CloudSteps: 3
+    - _HorizonSharp: 1.6
+    - _HorizonWidth: 0.18
+    - _MidHeight: 0.35
+    - _SkyExponent: 1.1
+    - _SunBands: 2
+    - _SunGlow: 90
+    - _SunGlowInt: 2
+    - _SunHalo: 0.25
+    - _SunSize: 0.01
+    - _SunSoftness: 0.004
+    - _WashHeight: 10
+    - _WashSpread: 4
+    m_Colors:
+    - _BandColor: {r: 1, g: 1, b: 1, a: 0.15}
+    - _CloudColor: {r: 1, g: 0.92, b: 0.82, a: 1}
+    - _CloudInkColor: {r: 0.1, g: 0.06, b: 0.12, a: 1}
+    - _CloudShadow: {r: 0.78, g: 0.56, b: 0.66, a: 1}
+    - _GroundColor: {r: 0.14, g: 0.1, b: 0.18, a: 1}
+    - _HorizonColor: {r: 1, g: 0.66, b: 0.36, a: 1}
+    - _MidColor: {r: 0.54999995, g: 0.45, b: 0.62, a: 1}
+    - _SkyColor: {r: 0.34999996, g: 0.62, b: 0.92, a: 1}
+    - _SunColor: {r: 6, g: 4.4, b: 2.6, a: 1}
+    - _SunDir: {r: 0.1, g: 0.015, b: 1, a: 0}
+    - _SunGlowColor: {r: 3, g: 1.2, b: 0.45, a: 1}
+    - _WashColor: {r: 1, g: 0.41999996, b: 0.19999996, a: 1}
+    - _ZenithColor: {r: 0.15999997, g: 0.19999996, b: 0.41999996, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

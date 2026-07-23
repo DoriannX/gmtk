@@ -21,14 +21,46 @@ namespace Core
             if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) y -= 1f;
             if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) y += 1f;
 
-            Vector2 axis = new Vector2(x, y);
-            return axis.sqrMagnitude > 1f ? axis.normalized : axis;
+            // Pas de normalisation diagonale : throttle et steer sont des canaux
+            // independants pour un vehicule (normaliser affamait la marche arriere
+            // en virage : 0.707 * reverseAcceleration < friction sol -> stall).
+            return new Vector2(x, y);
+        }
+
+        public static bool GetActionHeld()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.spaceKey.isPressed;
+        }
+
+        public static bool GetDriftHeld()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.leftShiftKey.isPressed;
+        }
+
+        public static bool GetJumpPressed()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.spaceKey.wasPressedThisFrame;
+        }
+
+        public static bool GetBoostPressed()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.eKey.wasPressedThisFrame || Keyboard.current.leftCtrlKey.wasPressedThisFrame;
         }
 
         public static bool GetActionPressed()
         {
             if (Keyboard.current == null) return false;
             return Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.eKey.wasPressedThisFrame;
+        }
+
+        public static bool GetHeadlightPressed()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.fKey.wasPressedThisFrame;
         }
 
         public static bool GetPausePressed()

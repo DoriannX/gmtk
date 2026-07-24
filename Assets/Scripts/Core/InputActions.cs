@@ -45,6 +45,12 @@ namespace Core
             return Keyboard.current.spaceKey.wasPressedThisFrame;
         }
 
+        public static bool GetJumpHeld()
+        {
+            if (Keyboard.current == null) return false;
+            return Keyboard.current.spaceKey.isPressed;
+        }
+
         public static bool GetBoostPressed()
         {
             if (Keyboard.current == null) return false;

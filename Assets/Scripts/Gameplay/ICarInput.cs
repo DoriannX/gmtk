@@ -9,6 +9,7 @@ namespace Gameplay
         Vector2 Movement { get; }   // x = steer, y = throttle
         bool DriftHeld { get; }
         bool JumpPressed { get; }
+        bool JumpHeld { get; }      // maintenu = charge le super saut ; relache = declenche
         bool BoostPressed { get; }
         bool HeadlightPressed { get; }
         bool TrickHeld { get; }   // modificateur figures en l'air (clic droit) : sans -> yaw seul
@@ -21,6 +22,7 @@ namespace Gameplay
         public Vector2 Movement => Core.InputActions.GetMovementAxis();
         public bool DriftHeld => Core.InputActions.GetDriftHeld();
         public bool JumpPressed => Core.InputActions.GetJumpPressed();
+        public bool JumpHeld => Core.InputActions.GetJumpHeld();
         public bool BoostPressed => Core.InputActions.GetBoostPressed();
         public bool HeadlightPressed => Core.InputActions.GetHeadlightPressed();
         public bool TrickHeld => Core.InputActions.GetTrickHeld();

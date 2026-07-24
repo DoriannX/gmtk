@@ -33,8 +33,8 @@ namespace Gameplay
         [Header("Suspension mono-roue (ressort central + equilibrage)")]
         [SerializeField] private float monoTravel = 0.35f;     // debattement de la roue centrale
         [SerializeField] private float alignSpeed = 400f;      // deg/s : equilibrage (aligne la caisse a la normale sol)
-        [SerializeField] private float alignProbeLength = 2.5f; // portee (descente) des 4 sondes de plan
-        [SerializeField] private Vector2 alignProbeExtents = new Vector2(0.6f, 2.5f); // ecartement des sondes (x lateral, z avant/arriere) : DOIT depasser le bumper -> anticipe la pente AVANT que le nez cogne
+        [SerializeField] private float alignProbeLength = 1.2f; // levee + portee (descente) des sondes de plan : COURT -> hugge le sol, ne peut pas atteindre un tablier de pont au-dessus
+        [SerializeField] private Vector2 alignProbeExtents = new Vector2(0.6f, 1.6f); // ecartement des sondes (x lateral, z avant/arriere) : juste au-dela du bumper -> anticipe la pente sans sonder trop loin
 
         [Header("Suspension 4 points (raycast, invisible)")]
         [SerializeField] private Vector2 suspensionHalfExtents = new Vector2(0.5f, 1.0f); // demi-voie (x) / demi-empattement (z) des 4 appuis
@@ -50,12 +50,27 @@ namespace Gameplay
         [SerializeField] private float boostMinDriftTime = 0.7f; // duree de drift pour armer le boost
         [SerializeField] private float boostImpulse = 8f;
 
-        [Header("Saut (impulsion verticale)")]
-        [SerializeField] private float jumpVelocity = 7f;       // m/s vers le haut -> hauteur ~ v^2/2g (7 -> ~2.5m)
-        [SerializeField] private float jumpBufferTime = 0.15f;  // presse un peu avant d'atterrir = saute quand meme
-        [SerializeField] private float coyoteTime = 0.12f;     // saute juste apres avoir quitte le sol
+        [Header("Saut (maintien = charge -> super saut + spin)")]
+        [SerializeField] private float jumpVelocity = 7f;         // saut de base (tap) : hauteur ~ v^2/2g
+        [SerializeField] private float superJumpVelocity = 13f;   // saut a pleine charge
+        [SerializeField] private float jumpChargeMax = 1.0f;      // temps de maintien pour la charge max
+        [SerializeField] private float superJumpChargeTime = 0.45f; // charge mini pour declencher le SUPER saut (+ spin)
+        [SerializeField] private float superSpinDegrees = 360f;   // spin offert par le super saut
+        [SerializeField] private float superSpinSpeed = 540f;     // vitesse du spin en l'air (deg/s)
+        [SerializeField] private float coyoteTime = 0.12f;        // saute juste apres avoir quitte le sol
         [SerializeField] private float stretchOnJump = 1.35f;
         [SerializeField] private float squashOnLand = 0.65f;
+
+        [Header("Juice super saut (cartoon punchy)")]
+        [SerializeField] private float chargeSquashY = 0.55f;   // squash vertical a pleine charge (coile le ressort)
+        [SerializeField] private float superStretch = 1.8f;     // gros stretch au lancement (BOING)
+        [SerializeField] private float superLandSquash = 0.45f; // ecrasement a l'atterrissage du super saut
+        [SerializeField] private float superShakeAmp = 0.4f;
+        [SerializeField] private float superShakeDur = 0.45f;
+        [SerializeField] private float superFovPunch = 2.8f;    // multiplicateur du kick FOV
+        [SerializeField] private int superFlameBurst = 32;      // burst de flammes au decollage
+        [SerializeField] private int superDustCount = 22;       // nuage de poussiere sous le camion
+        [SerializeField] private float superHitstopScale = 0.45f; // creux de slow-mo au lancement (1 = off)
 
         [Header("Air control")]
         [SerializeField] private float airSteerSpeed = 150f; // deg/s en l'air (IA / yaw de base)
@@ -64,6 +79,9 @@ namespace Gameplay
         [SerializeField] private float airSpinSpeed = 300f;  // yaw en l'air (spins) : Shift + A/D
         [SerializeField] private float airFlipSpeed = 300f;  // pitch (flip) : Shift + W/S
         [SerializeField] private float airLevelSpeed = 220f; // redressement auto (deg/s) hors mode figure -> retombe sur roues
+        [SerializeField] private float landAlignDist = 3f; // portee COURTE du ray SOUS le camion pour pre-aligner l'atterrissage : petit -> ne chasse pas les surfaces lointaines/croisees
+        [Header("Debug")]
+        [SerializeField] private bool drawDebugGizmos = true; // dessine TOUTES les detections physiques (activer Gizmos dans la Game view)
 
         [Header("Saut / air")]
         [SerializeField] private float fallMultiplier = 1.8f;       // gravite x en chute -> arc snappy
@@ -81,6 +99,7 @@ namespace Gameplay
         [Header("Boost")]
         [SerializeField] private float boostSpeedGain = 9f;      // impulse immediat
         [SerializeField] private float boostExtraMaxSpeed = 10f; // vitesse max relevee pendant le boost
+        [SerializeField, Range(0f, 1f)] private float airBoostRedirect = 0.6f; // boost en l'air : part de la vitesse redirigee vers le nez (0 = pousse pure, 1 = dash plein nez)
         [SerializeField] private float boostDuration = 0.9f;
         [SerializeField] private float boostCooldown = 2.5f;
         [SerializeField] private float boostFovKick = 12f;       // feedback camera
@@ -123,7 +142,10 @@ namespace Gameplay
         [Header("Juice boost")]
         [SerializeField] private ParticleSystem speedLines;   // trainees anime autour du camion
         [SerializeField] private float speedLinesRate = 70f;
-        [SerializeField] private ParticleSystem boostRing;    // onde de choc au declenchement
+        [SerializeField] private ParticleSystem boostRing;    // onde de choc SUPER SAUT (decollage/atterrissage), a plat au sol
+        [SerializeField] private ParticleSystem boostGroundRing; // onde de choc du BOOST : VERTICALE, face avant, le camion la traverse
+        [SerializeField] private float ringGroundOffset = 0f; // reglage fin : hauteur du ring sous le pied de la roue (super saut)
+        [SerializeField] private float boostRingHeight = 0.8f; // hauteur du ring de boost sur la caisse (centre du vehicule)
         [SerializeField] private float boostShakeAmplitude = 0.18f;
         [SerializeField] private float boostShakeDuration = 0.35f;
         [SerializeField] private float boostFovPunch = 1.9f;  // overshoot instantane du FOV (x kick)
@@ -168,7 +190,11 @@ namespace Gameplay
 
         // Saut : buffer echantillonne en Update (wasPressedThisFrame rate des
         // FixedUpdate sinon) + coyote time
-        private float jumpBufferTimer;
+        private float jumpCharge;    // temps de maintien du bouton saut (grounded) -> puissance
+        private bool wasJumpHeld;    // detection de la relache (charge -> saute)
+        private bool wasCharging;    // chargeait au tick precedent (pour relacher le squash sans saut)
+        private bool superJumpActive; // super saut en cours -> gros juice a l'atterrissage
+        private float airSpinBank;   // spin restant a jouer en l'air (offert par le super saut)
         private float coyoteTimer;
 
         // Etat expose pour les interactions (roadkill pieton) : vitesse plane
@@ -181,10 +207,13 @@ namespace Gameplay
         // --- Etat expose pour le TrickSystem (detection de figures) ---
         public bool Grounded { get; private set; }
         public bool Drifting { get; private set; }
-        // rotation aerienne cumulee (deg signes), remise a zero au decollage. Vient
-        // des increments d'input appliques -> pas de galere de gimbal euler.
+        // rotation aerienne cumulee (deg signes), remise a zero au decollage. Integre la
+        // rotation REELLE du corps (physique + input), pas juste l'input -> un flip lance
+        // depuis une rampe verticale (camion deja incline au decollage) compte sa rotation
+        // complete et l'atterrissage valide.
         public float AirSpinDeg { get; private set; }
         public float AirFlipDeg { get; private set; }
+        private Quaternion airRotPrev = Quaternion.identity; // orientation du corps au tick precedent (pour integrer la rotation aerienne)
         // Vrai quand le joueur pilote activement une figure en l'air (Shift maintenu).
         public bool DoingTrick { get; private set; }
         // Orientation a l'instant du contact (up . monde), AVANT le redressement auto :
@@ -215,15 +244,25 @@ namespace Gameplay
             rb.angularDamping = 3f;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
 
+            // Sort la roue de visualBody -> le squash de la caisse ne la deforme plus. La roue etait
+            // enfant d'un scale non-uniforme + rotation (spin) -> impossible a contre-scaler (shear).
+            // Sous root (scale 1) elle reste ronde et plantee ; le squash n'affecte que les meshes caisse.
+            if (wheelVisual != null && visualBody != null && wheelVisual.IsChildOf(visualBody))
+                wheelVisual.SetParent(transform, true); // garde la transform monde (roue = petite-fille de Body)
             if (wheelVisual != null)
             {
                 wheelRestLocalRot = wheelVisual.localRotation;
-                wheelRestLocalPos = wheelVisual.localPosition; // position "montee" (haut du debattement)
-                // axe d'essieu (droite de la voiture) exprime dans le repere local de la roue
+                wheelRestLocalPos = wheelVisual.localPosition; // capture dans le nouveau parent (root)
                 wheelSpinAxisLocal = wheelVisual.InverseTransformDirection(transform.right);
             }
             if (visualBody != null)
                 visualBaseScale = visualBody.localScale;
+
+            // BoostRing = onde de choc AU SOL : simulation MONDE (EmitParams.position lu en monde,
+            // reste au sol) + alignment MONDE (le mesh du ring ne suit plus l'orientation du camion).
+            // On l'emet ensuite couche a plat (rotation 90 sur X) -> normale vers le haut.
+            SetupGroundRing(boostRing);
+            SetupGroundRing(boostGroundRing);
 
             // Camera.main exige le tag MainCamera -> fallback par type si oublie
             followCam = Camera.main;
@@ -247,8 +286,6 @@ namespace Gameplay
         {
             // Echantillonne les inputs cote frame : wasPressedThisFrame lu en
             // FixedUpdate rate des appuis (0 ou N ticks physique par frame)
-            if (Input.JumpPressed)
-                jumpBufferTimer = jumpBufferTime;
             if (Input.BoostPressed && boostCooldownTimer <= 0f)
                 boostQueued = true;
             if (Input.HeadlightPressed)
@@ -338,19 +375,32 @@ namespace Gameplay
                         if (downV < 0f) rb.linearVelocity -= transform.up * downV;
                     }
 
-                    // ASSIETTE ANTICIPEE : on estime le PLAN porteur a partir des POINTS de contact
-                    // aux 4 coins (fit de plan, pas moyenne de normales -> correct sur pentes raides).
-                    // Avant-arriere -> pitch, gauche-droite -> roll. Quand l'avant passe sur la rampe,
-                    // le plan s'incline -> le nez leve et grimpe. Il faut les 4 coins ; sinon (coin dans
-                    // le vide / hors portee, ex. poutre) on garde la normale de la roue. Sonde seule (0 force).
-                    Vector3 c0, c1, c2, c3;
-                    if (ProbeCorner(0, out c0) & ProbeCorner(1, out c1)
-                      & ProbeCorner(2, out c2) & ProbeCorner(3, out c3))
+                    // ASSIETTE ANTICIPEE (PITCH seul) : 2 sondes sur l'axe CENTRAL (avant/arriere,
+                    // x=0) -> anticipe la pente pour lever le nez. PAS de sonde laterale : sur une
+                    // poutre / arete etroite, des sondes de cote taperaient le flanc ou le vide et
+                    // feraient rouler la caisse doucement de cote. Le roll reste donne par la roue
+                    // (equilibrage). Sonde seule (aucune force).
+                    Vector3 fptC, rptC;
+                    // Rejette une sonde separee du CONTACT ROUE reel par un ecart vertical trop grand
+                    // (> pente ~45 deg sur la distance sondee) : c'est un tablier de pont / plafond /
+                    // marche infranchissable au-dessus, pas la surface qu'on roule. Sinon le point avant
+                    // sur le pont donnait un plan quasi vertical -> le camion se cabrait/flippait dessous.
+                    Vector3 contact = mhit.point;
+                    float maxStep = alignProbeExtents.y;
+                    if (ProbeGround(0f, alignProbeExtents.y, out fptC)
+                      & ProbeGround(0f, -alignProbeExtents.y, out rptC)
+                      && Mathf.Abs(Vector3.Dot(fptC - contact, transform.up)) <= maxStep
+                      && Mathf.Abs(Vector3.Dot(rptC - contact, transform.up)) <= maxStep)
                     {
-                        Vector3 fwd = ((c2 + c3) - (c0 + c1)) * 0.5f; // avant - arriere
-                        Vector3 rgt = ((c1 + c3) - (c0 + c2)) * 0.5f; // droite - gauche
-                        Vector3 n = Vector3.Cross(fwd, rgt);
-                        if (Vector3.Dot(n, transform.up) < 0f) n = -n;
+                        // Roll depuis la NORMALE ROUE (baseN), pas depuis transform.right : sinon le roll
+                        // s'auto-reference et ne se corrige jamais (on restait tilt en descendant de la
+                        // poutre). Ici l'axe droit vient du sol -> le roll se recale toujours a plat.
+                        Vector3 baseN = groundNormal;
+                        Vector3 rightAxis = Vector3.Cross(baseN, transform.forward);
+                        if (rightAxis.sqrMagnitude < 1e-4f) rightAxis = transform.right;
+                        Vector3 fv = fptC - rptC;                        // avant - arriere -> pitch (anticipation)
+                        Vector3 n = Vector3.Cross(fv, rightAxis.normalized);
+                        if (Vector3.Dot(n, baseN) < 0f) n = -n;
                         if (n.sqrMagnitude > 1e-4f) groundNormal = n.normalized;
                     }
                 }
@@ -387,41 +437,87 @@ namespace Gameplay
                     ? Vector3.Slerp(groundNormalSmooth, groundNormal, 1f - Mathf.Exp(-dt * normalSmoothSpeed))
                     : groundNormal;
 
-            // ================= SAUT (impulsion verticale) =================
+            // ================= SAUT (maintien = charge -> super saut + spin) =================
+            // Maintenir le bouton au sol charge la puissance ; a la RELACHE on saute. Tap = saut
+            // de base. Charge >= superJumpChargeTime -> SUPER saut + un spin offert (airSpinBank,
+            // joue en l'air). Impulsion verticale nette -> hauteur previsible (v^2/2g).
             coyoteTimer = grounded ? coyoteTime : coyoteTimer - dt;
-            if (jumpBufferTimer > 0f && coyoteTimer > 0f)
+            bool jumpHeld = Input.JumpHeld;
+            bool charging = grounded && jumpHeld;
+            if (charging)
             {
-                // impulsion verticale nette -> hauteur previsible (v^2/2g), independante de la
-                // raideur suspension. On repart d'une vitesse verticale propre (pas de cumul negatif).
+                jumpCharge = Mathf.Min(jumpCharge + dt, jumpChargeMax);
+                // ANTICIPATION cartoon : la caisse se COMPRIME (coil) de plus en plus, et VIBRE
+                // quand le super saut est arme -> lecture visuelle de la charge.
+                if (visualBody != null)
+                {
+                    scaleTween?.Kill();
+                    float c = Mathf.Clamp01(jumpCharge / superJumpChargeTime);
+                    float sq = Mathf.Lerp(1f, chargeSquashY, c);
+                    float sxz = 1f + (1f - sq) * 0.6f;
+                    float wob = jumpCharge >= superJumpChargeTime ? Mathf.Sin(Time.unscaledTime * 55f) * 0.04f : 0f;
+                    // Scale autour du pivot du body (a la base de la caisse) : la caisse s'ecrase
+                    // vers le bas. La roue (enfant) est contre-scalee dans PlantWheel -> elle NE
+                    // retrecit PAS et reste plantee au sol (c'est ce qui faisait "voler" avant).
+                    visualBody.localScale = Vector3.Scale(visualBaseScale, new Vector3(sxz + wob, sq, sxz - wob));
+                }
+            }
+            bool jumped = false;
+            if (wasJumpHeld && !jumpHeld && coyoteTimer > 0f)
+            {
+                float t = Mathf.Clamp01(jumpCharge / jumpChargeMax);
+                float vJump = Mathf.Lerp(jumpVelocity, superJumpVelocity, t);
                 Vector3 v = rb.linearVelocity;
                 if (v.y < 0f) v.y = 0f;
-                rb.linearVelocity = v + Vector3.up * jumpVelocity;
-                PunchScaleY(stretchOnJump);
-                jumpBufferTimer = 0f;
+                rb.linearVelocity = v + Vector3.up * vJump;
+                if (jumpCharge >= superJumpChargeTime)
+                {
+                    airSpinBank = superSpinDegrees;
+                    superJumpActive = true;
+                    SuperJumpJuice(); // gros paquet cartoon
+                }
+                else PunchScaleY(stretchOnJump);
                 coyoteTimer = 0f;
+                jumped = true;
             }
-            jumpBufferTimer -= dt;
+            if (wasCharging && !charging && !jumped && visualBody != null)
+                PunchScaleY(1f); // relache sans sauter -> le ressort revient a sa forme
+            if (!jumpHeld || !grounded) jumpCharge = 0f; // pas de charge en l'air / apres relache
+            wasJumpHeld = jumpHeld;
+            wasCharging = charging;
 
             // Juice atterrissage / decollage
             if (!wasGrounded && grounded)
             {
-                LandUprightDot = Vector3.Dot(transform.up, Vector3.up);
-                PunchScaleY(squashOnLand);
+                // Aligne-t-on le UP a la SURFACE d'atterrissage (pas au vertical monde) ? Sur un
+                // mur / une pente, atterrir roues-contre-la-surface est PROPRE : up ~ groundNormal
+                // -> dot ~1. Raté = un flanc/le toit tape la surface -> dot faible. Robuste tout-sens.
+                LandUprightDot = Vector3.Dot(transform.up, groundNormal);
+                airSpinBank = 0f; // spin de super saut non termine -> pas de report au saut suivant
+                // Atterrissage du SUPER saut = gros IMPACT cartoon (ecrase fort + shake + slow-mo).
+                bool superLand = superJumpActive;
+                superJumpActive = false;
+                PunchScaleY(superLand ? superLandSquash : squashOnLand);
+                Vector3 landPos = GroundUnderTruck();
+                if (superLand)
+                {
+                    if (IsPlayer && followCamCtrl != null) followCamCtrl.Shake(superShakeAmp * 0.85f, superShakeDur * 0.7f);
+                    Hitstop.Punch(0.5f, 0.03f, 0.14f);
+                    EmitGroundRing(boostRing); // onde de choc super saut au pied de la roue
+                }
                 if (driftSmoke != null)
                 {
-                    var p = new ParticleSystem.EmitParams
-                    {
-                        position = wheelVisual != null
-                            ? wheelVisual.position + Vector3.down * (wheelRadius * 0.8f)
-                            : transform.position + Vector3.down * 0.3f,
-                        applyShapeToPosition = true
-                    };
-                    for (int i = 0; i < landPuffCount; i++)
+                    var p = new ParticleSystem.EmitParams { position = landPos, applyShapeToPosition = true };
+                    int puffs = superLand ? superDustCount : landPuffCount;
+                    for (int i = 0; i < puffs; i++)
                         driftSmoke.Emit(p, 1);
                 }
             }
             if (wasGrounded && !grounded)
+            {
                 AirSpinDeg = AirFlipDeg = 0f;
+                airRotPrev = rb.rotation; // reference de rotation au decollage
+            }
             wasGrounded = grounded;
 
             // ================= BURNOUT =================
@@ -466,14 +562,15 @@ namespace Gameplay
                 TriggerBoost(boostSpeedGain, boostDuration);
                 boostCooldownTimer = boostCooldown;
             }
-            // Mini-turbo : le drift charge tant qu'on glisse ; le boost ne part QU'A
-            // LA RELACHE du bouton drift (Shift). Avant il partait des que `drifting`
-            // s'eteignait -> en donut la vitesse dip sous 3 -> boost parasite mid-drift.
+            // Mini-turbo : le drift charge tant qu'on glisse ; le boost ne part QU'A LA RELACHE du
+            // bouton drift (Shift). GATE sur le gaz : le boost ne part que si on ACCELERE encore a
+            // la relache -> pour l'annuler, lacher le gaz avant de relacher le drift. (Avant il partait
+            // aussi quand on s'arretait de foncer, ce qui etait chiant.)
             if (drifting) driftTime += dt;
             bool driftBtn = Input.DriftHeld;
             if (wasDriftBtn && !driftBtn)
             {
-                if (driftTime >= boostMinDriftTime)
+                if (driftTime >= boostMinDriftTime && throttle > 0.1f)
                     TriggerBoost(boostImpulse, boostDuration * 0.6f);
                 driftTime = 0f;
             }
@@ -507,10 +604,13 @@ namespace Gameplay
 
             // ================= VITESSE / GRIP / DIRECTION =================
             // Clamp vitesse horizontale (verticale = suspension/gravite preservee)
+            // Pendant un boost EN L'AIR : pas de clamp -> le dash dans la direction du nez survit
+            // (redirige/accelere en 3D). Au sol ou hors boost : clamp horizontal normal.
+            bool airBoosting = !grounded && boostTimer > 0f;
             float maxNow = maxSpeed + (boostTimer > 0f ? boostExtraMaxSpeed : 0f);
             Vector3 flatVel = rb.linearVelocity;
             float yVel = flatVel.y; flatVel.y = 0f;
-            if (flatVel.magnitude > maxNow) flatVel = flatVel.normalized * maxNow;
+            if (!airBoosting && flatVel.magnitude > maxNow) flatVel = flatVel.normalized * maxNow;
             flatVel.y = yVel;
             rb.linearVelocity = flatVel;
 
@@ -571,6 +671,13 @@ namespace Gameplay
             }
             else if (IsPlayer)
             {
+                // spin offert par le super saut : se consomme en l'air (yaw bonus, compte comme SPIN)
+                float bankYaw = 0f;
+                if (airSpinBank > 0f)
+                {
+                    bankYaw = Mathf.Min(superSpinSpeed * dt, airSpinBank);
+                    airSpinBank -= bankYaw;
+                }
                 if (Input.TrickHeld)
                 {
                     // MODE FIGURE (clic droit maintenu) : flips (throttle -> pitch) +
@@ -578,30 +685,41 @@ namespace Gameplay
                     // et un flip rate finit sur le toit (RATE honnete a l'impact). Seul
                     // ce mode alimente AirSpin/FlipDeg -> seules les figures voulues
                     // sont scorees par le TrickSystem.
-                    float yaw = steer * airSpinSpeed * dt;
+                    float yaw = steer * airSpinSpeed * dt + bankYaw;
                     float pitch = throttle * airFlipSpeed * dt;
                     rb.MoveRotation(rb.rotation * Quaternion.Euler(pitch, yaw, 0f));
-                    AirSpinDeg += yaw; AirFlipDeg += pitch;
                     DoingTrick = Mathf.Abs(steer) > 0.15f || Mathf.Abs(throttle) > 0.15f;
                 }
                 else
                 {
-                    // DEFAUT : rotation sur soi (yaw via A/D). throttle IGNORE -> pas de
-                    // flip hors mode figure (c'etait le tilt parasite). Le spin sur soi
-                    // reste une vraie figure SPIN (alimente AirSpinDeg -> detecte/score).
-                    // Auto-redressement pitch/roll en gardant le cap -> retombe toujours
-                    // sur les roues (le yaw survit, upright reprend son cap). Une SEULE
-                    // MoveRotation par tick : on compose yaw + redressement avant d'appliquer.
+                    // DEFAUT : rotation sur soi (yaw via A/D) + spin du super saut. throttle IGNORE
+                    // -> pas de flip hors mode figure. Le spin sur soi reste une vraie figure SPIN
+                    // (alimente AirSpinDeg -> detecte/score). Auto-redressement pitch/roll en gardant
+                    // le cap -> retombe sur les roues. Une SEULE MoveRotation : yaw + redressement composes.
                     bool spinning = Mathf.Abs(steer) > 0.15f;
-                    DoingTrick = spinning;
+                    DoingTrick = spinning || bankYaw != 0f;
                     Quaternion r = rb.rotation;
-                    if (spinning)
-                    {
-                        float yaw = steer * airSpinSpeed * dt;
+                    float yaw = (spinning ? steer * airSpinSpeed * dt : 0f) + bankYaw;
+                    if (yaw != 0f)
                         r *= Quaternion.Euler(0f, yaw, 0f);
-                        AirSpinDeg += yaw;
+                    // Cible de redressement : aligne le UP a la normale de la surface qu'on va
+                    // VRAIMENT toucher en tombant (ray court vers le bas, seulement en descente),
+                    // en gardant le cap -> on retombe a plat sur la pente en dessous. Sinon (on monte,
+                    // rien de proche dessous, ou surface non-posable) -> a plat monde. On ne s'aligne
+                    // JAMAIS sur les murs/plafonds/formes croisees -> plus de rotations parasites en
+                    // loop / au decollage sur les vagues / sous un pont.
+                    Quaternion upright;
+                    Vector3 landN;
+                    if (PredictLandingNormal(out landN))
+                    {
+                        Vector3 head = Vector3.ProjectOnPlane(r * Vector3.forward, landN);
+                        if (head.sqrMagnitude < 1e-4f) head = Vector3.ProjectOnPlane(transform.forward, landN);
+                        upright = Quaternion.LookRotation(head.normalized, landN);
                     }
-                    Quaternion upright = Quaternion.Euler(0f, r.eulerAngles.y, 0f);
+                    else
+                    {
+                        upright = Quaternion.Euler(0f, r.eulerAngles.y, 0f);
+                    }
                     r = Quaternion.RotateTowards(r, upright, airLevelSpeed * dt);
                     rb.MoveRotation(r);
                 }
@@ -611,6 +729,25 @@ namespace Gameplay
                 float yaw = steer * airSteerSpeed * dt;
                 rb.MoveRotation(rb.rotation * Quaternion.Euler(0f, yaw, 0f));
             }
+
+            // SCORE FIGURES : integre la rotation REELLE du corps en l'air (rampe + physique +
+            // input) et la decompose sur les axes locaux. SPIN (lacet) toujours compte ; FLIP
+            // (tangage) seulement en mode figure (clic droit) pour garder "flips = voulus".
+            // Orientation-independant -> un flip depuis une rampe verticale compte en entier.
+            if (!grounded)
+            {
+                Quaternion delta = rb.rotation * Quaternion.Inverse(airRotPrev);
+                float ang; Vector3 axis;
+                delta.ToAngleAxis(out ang, out axis);
+                if (axis.sqrMagnitude > 0.9f && Mathf.Abs(ang) > 0.0001f)
+                {
+                    if (ang > 180f) ang -= 360f; // plus court chemin
+                    Vector3 rv = axis * ang;
+                    AirSpinDeg += Vector3.Dot(rv, transform.up);
+                    if (IsPlayer && Input.TrickHeld) AirFlipDeg += Vector3.Dot(rv, transform.right);
+                }
+            }
+            airRotPrev = rb.rotation;
 
             float signedSpeed = Vector3.Dot(rb.linearVelocity, transform.forward);
             UpdateVisualTilt(steer, signedSpeed, drifting);
@@ -637,23 +774,167 @@ namespace Gameplay
             wheelVisual.localPosition = p != null ? p.InverseTransformPoint(targetWorld) : targetWorld;
         }
 
-        // Sonde le sol sous un coin (i : bit0 = droite, bit1 = avant) le long de la verticale
-        // chassis. Renvoie le point de contact monde. Sert au fit de plan de l'assiette (mono).
-        private bool ProbeCorner(int i, out Vector3 point)
+        // Sonde le sol sous un point local (x, mountHeight, z) le long de la verticale chassis.
+        // Origine LEVEE puis cast vers le bas : sinon une rampe qui monte DEVANT est plus haute
+        // que l'origine plate -> le rayon la rate. En partant d'en haut, la sonde voit la montee.
+        private bool ProbeGround(float localX, float localZ, out Vector3 point)
         {
-            Vector3 lc = new Vector3(
-                ((i & 1) == 0 ? -1f : 1f) * alignProbeExtents.x,
-                suspensionMountHeight,
-                ((i & 2) == 0 ? -1f : 1f) * alignProbeExtents.y);
-            // Origine LEVEE au-dessus du coin puis cast vers le bas : sinon une rampe qui
-            // monte DEVANT est plus haute que l'origine plate -> le rayon la rate. En partant
-            // d'en haut, la sonde voit la pente qui monte -> anticipation correcte.
+            Vector3 lc = new Vector3(localX, suspensionMountHeight, localZ);
             Vector3 origin = transform.TransformPoint(lc) + transform.up * alignProbeLength;
             if (Physics.Raycast(origin, -transform.up, out RaycastHit ah,
                     alignProbeLength * 2f, groundMask, QueryTriggerInteraction.Ignore)
                 && ah.collider.attachedRigidbody != rb)
             { point = ah.point; return true; }
             point = Vector3.zero; return false;
+        }
+
+        // Normale de la surface d'atterrissage, pour le PRE-alignement en l'air. Uniquement vers
+        // le BAS (la gravite nous y ramene), COURT (landAlignDist) et seulement en DESCENTE :
+        //  - on monte (decollage) -> pas d'alignement (sinon on chasse les vagues sous nous) ;
+        //  - surface trop loin -> pas d'alignement (sinon on chasse le sol lointain d'un loop) ;
+        //  - surface non-posable (normal.y trop faible = mur/plafond) -> ignoree (sinon on
+        //    s'aligne sur les murs du loop ou le dessous d'un pont).
+        // Le VRAI alignement mur/pente se fait au CONTACT (roues au sol -> groundNormal), pas ici :
+        // chasser les murs en l'air est incompatible avec ne pas paniquer en loop / pres d'un mur.
+        private bool PredictLandingNormal(out Vector3 normal)
+        {
+            normal = Vector3.up;
+            if (rb.linearVelocity.y > 0.5f) return false; // en montee : on ne s'aligne pas
+            if (Physics.Raycast(transform.position, Vector3.down, out RaycastHit h, landAlignDist,
+                    groundMask, QueryTriggerInteraction.Ignore)
+                && h.collider.attachedRigidbody != rb && h.normal.y > 0.35f)
+            { normal = h.normal; return true; }
+            return false;
+        }
+
+        // Point de CONTACT ROUE / SOL (pour centrer les FX au sol : onde de choc, poussiere).
+        // Raycast vers le bas depuis la roue (pas le centre du camion, qui est decale). Fallback
+        // = bas de la roue si rien touche.
+        private Vector3 GroundUnderTruck()
+        {
+            Vector3 origin = wheelVisual != null ? wheelVisual.position : transform.position;
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit h, 6f,
+                    groundMask, QueryTriggerInteraction.Ignore)
+                && h.collider.attachedRigidbody != rb)
+                return h.point;
+            return origin + Vector3.down * wheelRadius;
+        }
+
+        // ============ DEBUG : dessine TOUTES les detections physiques du controleur ============
+        // Chaque cast est REJOUE ici (lecture seule) avec la transform courante -> on voit
+        // exactement ce que chaque sonde touche. Rouge sur un hit = surface accrochee. Activer
+        // "Gizmos" dans la Game view en Play pour voir en jeu. Legende (couleur du rayon) :
+        //  JAUNE = suspension (spherecast mono OU 4 rays coins) | CYAN = sondes d'assiette (pitch)
+        //  MAGENTA = ray sol robuste (anti-toit) | VERT = pre-alignement atterrissage | GRIS = roue
+        //  visuelle | BLEU = point FX au sol.
+        private void OnDrawGizmos()
+        {
+            if (!drawDebugGizmos) return;
+            if (rb == null) rb = GetComponent<Rigidbody>();
+            Vector3 up = transform.up;
+            // --- suspension ---
+            if (groundMode == GroundMode.FourPoint)
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    Vector3 local = new Vector3(
+                        ((i & 1) == 0 ? -1f : 1f) * suspensionHalfExtents.x,
+                        suspensionMountHeight,
+                        ((i & 2) == 0 ? -1f : 1f) * suspensionHalfExtents.y);
+                    GizmoCast(transform.TransformPoint(local), -up, suspensionRest + 0.1f, 0f, Color.yellow, "susp");
+                }
+            }
+            else
+            {
+                float castLift = wheelRadius + monoTravel;
+                Vector3 mountWorld = WheelMountWorld();
+                GizmoCast(mountWorld + up * castLift, -up, castLift + monoTravel + 0.1f, wheelRadius, Color.yellow, "susp-mono");
+            }
+            // --- sondes d'assiette (pitch central avant/arriere) ---
+            GizmoCast(transform.TransformPoint(new Vector3(0f, suspensionMountHeight, alignProbeExtents.y)) + up * alignProbeLength,
+                -up, alignProbeLength * 2f, 0f, Color.cyan, "assiette-av");
+            GizmoCast(transform.TransformPoint(new Vector3(0f, suspensionMountHeight, -alignProbeExtents.y)) + up * alignProbeLength,
+                -up, alignProbeLength * 2f, 0f, Color.cyan, "assiette-ar");
+            // --- ray sol robuste (anti-toit/flanc), n'agit que si incline mais on le montre toujours ---
+            GizmoCast(transform.position, Vector3.down, suspensionRest + 0.4f, 0f, Color.magenta, "sol-robuste");
+            // --- pre-alignement atterrissage (air, descente, court) ---
+            GizmoCast(transform.position, Vector3.down, landAlignDist, 0f, Color.green, "pre-align");
+            // --- roue visuelle (cosmetique) ---
+            if (wheelVisual != null)
+                GizmoCast(WheelMountWorld(), -up, wheelVisualDroop + wheelRadius, 0f, new Color(0.6f, 0.6f, 0.6f), "roue");
+            // --- point FX au sol ---
+            Vector3 fxOrigin = wheelVisual != null ? wheelVisual.position : transform.position;
+            GizmoCast(fxOrigin, Vector3.down, 6f, 0f, Color.blue, "fx-sol");
+        }
+
+        // Rejoue un cast (ray si radius=0, sinon spherecast) et le dessine : ligne coloree, spheres
+        // aux extremites si spherecast, et en ROUGE le hit + sa normale (la surface accrochee).
+        private void GizmoCast(Vector3 origin, Vector3 dir, float dist, float radius, Color col, string label)
+        {
+            dir = dir.normalized;
+            bool hit;
+            RaycastHit h;
+            if (radius > 0f)
+                hit = Physics.SphereCast(origin, radius, dir, out h, dist, groundMask, QueryTriggerInteraction.Ignore)
+                    && (rb == null || h.collider.attachedRigidbody != rb);
+            else
+                hit = Physics.Raycast(origin, dir, out h, dist, groundMask, QueryTriggerInteraction.Ignore)
+                    && (rb == null || h.collider.attachedRigidbody != rb);
+            Vector3 end = hit ? h.point : origin + dir * dist;
+            Gizmos.color = col;
+            Gizmos.DrawLine(origin, end);
+            if (radius > 0f)
+            {
+                Gizmos.DrawWireSphere(origin, radius);
+                Gizmos.DrawWireSphere(end, radius);
+            }
+            if (hit)
+            {
+                Gizmos.color = Color.red; // hit = surface accrochee par cette sonde
+                Gizmos.DrawSphere(h.point, 0.08f);
+                Gizmos.DrawLine(h.point, h.point + h.normal * 0.7f); // normale accrochee
+#if UNITY_EDITOR
+                UnityEditor.Handles.color = col;
+                UnityEditor.Handles.Label(h.point + h.normal * 0.75f, label);
+#endif
+            }
+        }
+
+        // Prepare une onde de choc "au sol" : detachee du camion (sinon Emit() sans position
+        // spawn au centre du camion), simulee en MONDE (reste posee), alignee monde, et sans
+        // velocity-over-lifetime (le VOL faisait deriver l'onde en grandissant -> centre glissait).
+        private static void SetupGroundRing(ParticleSystem ring)
+        {
+            if (ring == null) return;
+            ring.transform.SetParent(null, true);
+            var main = ring.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            var vol = ring.velocityOverLifetime;
+            vol.enabled = false;
+            var rend = ring.GetComponent<ParticleSystemRenderer>();
+            if (rend != null) rend.alignment = ParticleSystemRenderSpace.World;
+        }
+
+        // Onde de choc de BOOST : ring VERTICAL centre sur la caisse, plan = plan XY du camion
+        // (normale = forward) -> le camion la traverse en accelerant. World-sim + VOL off : reste
+        // en place, le vehicule fonce a travers.
+        private void EmitBoostRing()
+        {
+            if (boostGroundRing == null) return;
+            Vector3 pos = transform.position + transform.up * boostRingHeight;
+            var rp = new ParticleSystem.EmitParams { position = pos, rotation3D = transform.eulerAngles };
+            boostGroundRing.Emit(rp, 1);
+        }
+
+        // Onde de choc a plat, centree au PIED de la roue = position roue - rayon (+ offset de reglage).
+        // Simple calcul de hauteur, pas de raycast : le ring est deja World-sim, on lui passe la position monde.
+        private void EmitGroundRing(ParticleSystem ring)
+        {
+            if (ring == null) return;
+            Vector3 c = wheelVisual != null ? wheelVisual.position : transform.position;
+            Vector3 foot = c + Vector3.down * (wheelRadius + ringGroundOffset);
+            var rp = new ParticleSystem.EmitParams { position = foot, rotation3D = new Vector3(90f, 0f, 0f) };
+            ring.Emit(rp, 1);
         }
 
         // Ancrage visuel de la roue = sa position de repos authored, dans le monde
@@ -687,7 +968,20 @@ namespace Gameplay
 
         private void TriggerBoost(float speedGain, float duration)
         {
-            rb.AddForce(transform.forward * speedGain, ForceMode.VelocityChange);
+            if (Grounded)
+            {
+                rb.AddForce(transform.forward * speedGain, ForceMode.VelocityChange);
+            }
+            else
+            {
+                // EN L'AIR : vrai dash 3D dans la direction du NEZ. Redirige une partie de la
+                // vitesse vers l'avant du camion (le boost pousse ou pointe le nez, y compris en
+                // montee) puis ajoute le gain. Le clamp horizontal est desactive pendant un boost
+                // aerien (plus bas) -> le dash n'est pas mange.
+                Vector3 v = rb.linearVelocity;
+                Vector3 redirected = Vector3.Lerp(v, transform.forward * v.magnitude, airBoostRedirect);
+                rb.linearVelocity = redirected + transform.forward * speedGain;
+            }
             boostTimer = Mathf.Max(boostTimer, duration);
 
             // --- le paquet de juice ---
@@ -696,8 +990,7 @@ namespace Gameplay
             fovPunchValue = boostFovKick * boostFovPunch; // punch progressif via le lerp camera
             if (IsPlayer && followCamCtrl != null)
                 followCamCtrl.Shake(boostShakeAmplitude, boostShakeDuration);
-            if (boostRing != null) // onde de choc au sol (parentee au camion, elle suit)
-                boostRing.Emit(1);
+            EmitBoostRing(); // onde de choc BOOST verticale, face avant
             if (driftSmoke != null && wheelVisual != null) // burnout sous la roue
             {
                 var p = new ParticleSystem.EmitParams
@@ -738,9 +1031,29 @@ namespace Gameplay
             scaleTween?.Kill();
             float sxz = 1f + (1f - peakY) * 0.5f;
             Vector3 peak = Vector3.Scale(visualBaseScale, new Vector3(sxz, peakY, sxz));
+            // Scale autour du pivot (base de la caisse). La roue est contre-scalee dans PlantWheel.
             scaleTween = DOTween.Sequence()
                 .Append(visualBody.DOScale(peak, 0.08f).SetEase(Ease.OutQuad))
                 .Append(visualBody.DOScale(visualBaseScale, 0.5f).SetEase(Ease.OutElastic, 1.05f));
+        }
+
+        // Gros paquet de juice cartoon au DECOLLAGE du super saut : stretch violent, shake camera,
+        // punch FOV, micro slow-mo (OOMPH), onde de choc + flammes + nuage de poussiere sous la caisse.
+        private void SuperJumpJuice()
+        {
+            PunchScaleY(superStretch);                                  // BOING vertical
+            if (IsPlayer && followCamCtrl != null) followCamCtrl.Shake(superShakeAmp, superShakeDur);
+            fovPunchValue = boostFovKick * superFovPunch;               // punch FOV progressif
+            if (superHitstopScale < 1f) Hitstop.Punch(superHitstopScale, 0.04f, 0.16f); // freeze-frame
+            if (boostFlames != null) boostFlames.Emit(superFlameBurst); // gerbe de flammes
+            // onde de choc + poussiere AU SOL, centrees au pied de la roue
+            Vector3 groundPos = GroundUnderTruck();
+            EmitGroundRing(boostRing);
+            if (driftSmoke != null)
+            {
+                var ep = new ParticleSystem.EmitParams { position = groundPos, applyShapeToPosition = true };
+                for (int i = 0; i < superDustCount; i++) driftSmoke.Emit(ep, 1);
+            }
         }
 
         // Emission des lentilles arriere via instance de materiau (.material) :

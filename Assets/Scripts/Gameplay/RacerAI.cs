@@ -28,6 +28,7 @@ namespace Gameplay
         private Ramp targetRamp;
         private float boostTimer;
         private bool boostPulse, jumpPulse;
+        private float jumpHold; // maintien bref du saut : le controleur declenche a la relache
         private float steerCmd, throttleCmd;
         private bool driftCmd;
 
@@ -48,6 +49,7 @@ namespace Gameplay
         {
             float dt = Time.deltaTime;
             boostPulse = false; jumpPulse = false;
+            if (jumpHold > 0f) jumpHold -= dt;
 
             Vector3 pos = transform.position;
             Vector3 to = target - pos; to.y = 0f;
@@ -83,7 +85,7 @@ namespace Gameplay
             {
                 driftCmd = false;
                 if (Mathf.Abs(ang) < 20f) boostPulse = true;
-                if (dist < arriveDist * 1.3f) jumpPulse = true;
+                if (dist < arriveDist * 1.3f) { jumpPulse = true; jumpHold = 0.12f; }
             }
         }
 
@@ -100,6 +102,7 @@ namespace Gameplay
         public Vector2 Movement => new Vector2(steerCmd, throttleCmd);
         public bool DriftHeld => driftCmd;
         public bool JumpPressed => jumpPulse;
+        public bool JumpHeld => jumpHold > 0f;
         public bool BoostPressed => boostPulse;
         public bool HeadlightPressed => false;
         public bool TrickHeld => false; // l'IA ne pilote pas de figures manuelles

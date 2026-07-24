@@ -23,8 +23,16 @@ namespace Gameplay
         [SerializeField] private int flipPts = 450;
         [SerializeField] private int bigAirPtsPerSec = 260;
 
+        [Header("Grind")]
+        [SerializeField] private int grindPtsPerMeter = 8;  // points par metre glisse (score = DISTANCE, pas temps)
+        [SerializeField] private float grindMinDist = 2f;   // distance mini pour scorer un grind
+
         private static readonly Color SpinCol = new Color(0.35f, 0.8f, 1f);
         private static readonly Color FlipCol = new Color(1f, 0.55f, 0.2f);
+        private static readonly Color GrindCol = new Color(1f, 0.45f, 0.85f);
+
+        private float grindDist;
+        private bool wasRail;
 
         private ArcadeCarController car;
         private TrickHud hud;
@@ -49,6 +57,7 @@ namespace Gameplay
         private void Update()
         {
             float dt = Time.deltaTime;
+            HandleGrind(dt); // grind = etat propre (au sol logiquement), gere avant les branches air/sol
             if (!car.Grounded)
             {
                 if (!airborne) BeginAir();
@@ -107,6 +116,27 @@ namespace Gameplay
             if (jump <= 0) return; // simple saut sans rien : pas de score
 
             AwardChain(Summary(spins, flips, bigAir, car.AirSpinDeg, car.AirFlipDeg), jump, true);
+        }
+
+        // GRIND : les points s'accumulent avec la DISTANCE glissee (vitesse*dt), pas le temps ->
+        // rester immobile sur le rail ne rapporte rien (fair). Affichage live qui monte, banque a
+        // la sortie (chute/saut/fin de rail) via la meme chaine/combo que les figures.
+        private void HandleGrind(float dt)
+        {
+            if (car.OnRail)
+            {
+                grindDist += car.GrindSpeedAbs * dt;
+                wasRail = true;
+                hud.SetLive("grind", $"GRIND {Mathf.RoundToInt(grindDist * grindPtsPerMeter)}", GrindCol, true);
+            }
+            else if (wasRail)
+            {
+                wasRail = false;
+                hud.ClearLive();
+                if (grindDist >= grindMinDist)
+                    AwardChain($"GRIND {Mathf.RoundToInt(grindDist)}m", Mathf.RoundToInt(grindDist * grindPtsPerMeter));
+                grindDist = 0f;
+            }
         }
 
         private void HandleDrift(float dt)

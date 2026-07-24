@@ -54,8 +54,6 @@ namespace Gameplay
         [SerializeField] private float jumpVelocity = 7f;         // saut de base (tap) : hauteur ~ v^2/2g
         [SerializeField] private float superJumpVelocity = 13f;   // saut a pleine charge
         [SerializeField] private float jumpChargeMax = 1.0f;      // temps de maintien pour la charge max
-        [SerializeField] private float superJumpChargeTime = 0.45f; // charge mini pour declencher le SUPER saut (+ spin)
-        [SerializeField] private float superSpinDegrees = 360f;   // spin offert par le super saut
         [SerializeField] private float superSpinSpeed = 540f;     // vitesse du spin en l'air (deg/s)
         [SerializeField] private float coyoteTime = 0.12f;        // saute juste apres avoir quitte le sol
         [SerializeField] private float stretchOnJump = 1.35f;
@@ -80,6 +78,28 @@ namespace Gameplay
         [SerializeField] private float airFlipSpeed = 300f;  // pitch (flip) : Shift + W/S
         [SerializeField] private float airLevelSpeed = 220f; // redressement auto (deg/s) hors mode figure -> retombe sur roues
         [SerializeField] private float landAlignDist = 3f; // portee COURTE du ray SOUS le camion pour pre-aligner l'atterrissage : petit -> ne chasse pas les surfaces lointaines/croisees
+        [Header("Grind (rail)")]
+        [SerializeField] private GrindRailNetwork railNet;     // reseau de rails bake ; auto-trouve dans la scene si vide
+        [SerializeField] private float grindMinSpeed = 4f;     // en coast, sous ca -> tombe du rail
+        [SerializeField] private float grindEnterSpeed = 0.8f; // vitesse MINI pour s'accrocher
+        [SerializeField] private float grindGrab = 0.5f;       // distance MAX roue<->rail pour s'accrocher (petit -> pas de snap de loin qui gene les autres moves)
+        [SerializeField, Range(0f, 1f)] private float grindAlign = 0.6f; // |dot(vitesse, rail)| mini pour accrocher (1 = pile parallele)
+        [SerializeField] private float grindRideHeight = 0f;   // clearance en plus de wheelRadius (monter si la caisse clippe le rail)
+        [SerializeField] private float grindThrottle = 30f;    // accel/frein le long du rail (gaz)
+        [SerializeField] private float grindLean = 18f;        // roulis PHYSIQUE : la moto penche sur le cote pendant le grind (deg)
+        [SerializeField] private float grindYawPose = 25f;     // pose FIXE : rotation sur l'axe Y MONDE (yaw) de la moto en grind (deg)
+        [SerializeField] private float grindVisualLean = 22f;  // roulis VISUEL sur la caisse seule (cosmetique, en plus)
+        [SerializeField] private float grindGravity = 1f;      // gravite projetee le long du rail (garde l'elan en descente)
+        [SerializeField] private float grindJump = 8f;         // pop vertical de sortie (bail au saut)
+
+        [Header("Grind equilibre")]
+        [SerializeField] private float grindInstability = 7f;      // pendule inverse : + on penche + on tombe vite (bas = facile)
+        [SerializeField] private float grindBalanceControl = 30f;  // autorite du steer : doit battre l'instabilite MEME au seuil (sinon rattrapage impossible = inutile)
+        [SerializeField] private float grindBalanceDamp = 0.8f;    // amorti de la vitesse d'equilibre (overshoot maitrisable)
+        [SerializeField] private float grindFallThreshold = 2.2f;  // |balance| au-dela duquel on tombe (haut = plus permissif)
+        [SerializeField] private float grindBalanceLean = 30f;     // roll visuel de la moto au desequilibre max (deg)
+        [SerializeField] private float grindEject = 4f;            // ejection laterale a la chute -> evite de se raccrocher aussitot
+
         [Header("Debug")]
         [SerializeField] private bool drawDebugGizmos = true; // dessine TOUTES les detections physiques (activer Gizmos dans la Game view)
 
@@ -196,6 +216,19 @@ namespace Gameplay
         private bool superJumpActive; // super saut en cours -> gros juice a l'atterrissage
         private float airSpinBank;   // spin restant a jouer en l'air (offert par le super saut)
         private float coyoteTimer;
+        private bool grinding;      // colle a un rail -> ecrase le pilotage normal
+        private int grindPath;      // index du chemin dans le reseau
+        private float grindS;       // arc-length courant sur le chemin
+        private float grindSpeed;   // vitesse signee le long du chemin (sens +s)
+        private float grindDirSign; // cap fixe : sens de la moto sur le rail (choisi a l'entree), independant du sens de deplacement
+        private float grindBalance;       // equilibre -1..1, 0 = centre ; |x|>=1 -> chute
+        private float grindBalanceVel;    // vitesse d'equilibre (inertie -> overshoot de l'autre cote)
+        private float grindReattachTimer; // anti re-accroche apres une chute
+        public bool OnRail => grinding;
+        // Etat d'equilibre normalise pour l'UI : 0 = centre, +/-1 = seuil de chute.
+        public float GrindBalanceNorm => grindFallThreshold > 0f ? grindBalance / grindFallThreshold : grindBalance;
+        // Vitesse le long du rail (0 hors grind) -> le score grind se base sur la DISTANCE, pas le temps.
+        public float GrindSpeedAbs => grinding ? Mathf.Abs(grindSpeed) : 0f;
 
         // Etat expose pour les interactions (roadkill pieton) : vitesse plane
         // et boost actif decident du niveau de reaction du pieton percute.
@@ -236,6 +269,7 @@ namespace Gameplay
         private void Awake()
         {
             rb = GetComponent<Rigidbody>();
+            if (railNet == null) railNet = FindAnyObjectByType<GrindRailNetwork>();
             // Suspension gere l'assiette : COM au centre (pas trop bas, sinon elle
             // se bat contre le pitch de la suspension). Amortissement angulaire pour
             // eviter le wobble, lineaire leger pour garder l'elan.
@@ -298,6 +332,9 @@ namespace Gameplay
             Vector2 input = Input.Movement;
             float throttle = input.y;
             float steer = input.x;
+
+            // GRIND : si colle a une arete, physique de rail exclusive -> on court-circuite tout le reste.
+            if (UpdateGrind(dt, throttle, steer)) return;
 
             // ================= SUSPENSION 4 POINTS (raycast, invisible) =================
             // 4 ressorts-amortisseurs aux coins du chassis. Chacun sonde le sol sous lui et
@@ -437,13 +474,17 @@ namespace Gameplay
                     ? Vector3.Slerp(groundNormalSmooth, groundNormal, 1f - Mathf.Exp(-dt * normalSmoothSpeed))
                     : groundNormal;
 
-            // ================= SAUT (maintien = charge -> super saut + spin) =================
+            // ================= SAUT (maintien = charge -> super saut) =================
             // Maintenir le bouton au sol charge la puissance ; a la RELACHE on saute. Tap = saut
-            // de base. Charge >= superJumpChargeTime -> SUPER saut + un spin offert (airSpinBank,
-            // joue en l'air). Impulsion verticale nette -> hauteur previsible (v^2/2g).
+            // de base. Charge quasi PLEINE (>= superReq, 90% du max) -> SUPER saut (juice + hauteur,
+            // pas de spin offert). Impulsion verticale nette -> hauteur previsible (v^2/2g).
             coyoteTimer = grounded ? coyoteTime : coyoteTimer - dt;
             bool jumpHeld = Input.JumpHeld;
             bool charging = grounded && jumpHeld;
+            // Super saut = charge QUASI PLEINE (90% du max), pas un seuil bas absolu : un
+            // appui normal ne doit PAS declencher le super. Ratio -> robuste quelle que soit
+            // la valeur serialisee de jumpChargeMax sur le vehicule (moto, etc).
+            float superReq = jumpChargeMax * 0.9f;
             if (charging)
             {
                 jumpCharge = Mathf.Min(jumpCharge + dt, jumpChargeMax);
@@ -452,10 +493,10 @@ namespace Gameplay
                 if (visualBody != null)
                 {
                     scaleTween?.Kill();
-                    float c = Mathf.Clamp01(jumpCharge / superJumpChargeTime);
+                    float c = Mathf.Clamp01(jumpCharge / superReq);
                     float sq = Mathf.Lerp(1f, chargeSquashY, c);
                     float sxz = 1f + (1f - sq) * 0.6f;
-                    float wob = jumpCharge >= superJumpChargeTime ? Mathf.Sin(Time.unscaledTime * 55f) * 0.04f : 0f;
+                    float wob = jumpCharge >= superReq ? Mathf.Sin(Time.unscaledTime * 55f) * 0.04f : 0f;
                     // Scale autour du pivot du body (a la base de la caisse) : la caisse s'ecrase
                     // vers le bas. La roue (enfant) est contre-scalee dans PlantWheel -> elle NE
                     // retrecit PAS et reste plantee au sol (c'est ce qui faisait "voler" avant).
@@ -470,9 +511,10 @@ namespace Gameplay
                 Vector3 v = rb.linearVelocity;
                 if (v.y < 0f) v.y = 0f;
                 rb.linearVelocity = v + Vector3.up * vJump;
-                if (jumpCharge >= superJumpChargeTime)
+                if (jumpCharge >= superReq)
                 {
-                    airSpinBank = superSpinDegrees;
+                    // ponytail: pas de spin offert (retire, c'etait nul). Le super saut = juice
+                    // + hauteur, les figures restent au joueur (mode figure). airSpinBank reste 0.
                     superJumpActive = true;
                     SuperJumpJuice(); // gros paquet cartoon
                 }
@@ -818,6 +860,115 @@ namespace Gameplay
                 && h.collider.attachedRigidbody != rb)
                 return h.point;
             return origin + Vector3.down * wheelRadius;
+        }
+
+        // ================= GRIND (rail) =================
+        // Aimante la moto sur la ligne d'arete detectee (GrindDetector) et la fait glisser le
+        // long, comme un rail de skate. ENTREE : CanGrind (arete + nez ~parallele) + assez de
+        // vitesse. SORTIE : fin de rail (plus d'arete), trop lent, ou SAUT (bail avec pop). Tant
+        // qu'on grind, on ecrase le pilotage normal (return true -> FixedUpdate s'arrete la).
+        private bool UpdateGrind(float dt, float throttle, float steer)
+        {
+            if (railNet == null) return false;
+            if (grindReattachTimer > 0f) grindReattachTimer -= dt;
+            Vector3 wheelMount = WheelMountWorld();
+
+            // ---- ATTACHE : cherche le rail bake le plus proche + assez aligne ----
+            if (!grinding)
+            {
+                if (grindReattachTimer > 0f) return false; // vient de tomber -> pas de re-accroche immediate
+                if (rb.linearVelocity.magnitude < grindEnterSpeed) return false;
+                // mesure depuis le BAS de roue (contact), pas le centre : sinon la hauteur de roue
+                // (~wheelRadius) mangeait deja tout le budget -> les bords de box ne s'accrochaient plus.
+                Vector3 wheelBottom = wheelMount - Vector3.up * wheelRadius;
+                if (!railNet.QueryNearest(wheelBottom, grindGrab, out int path, out float s, out _, out Vector3 tan))
+                    return false;
+                Vector3 vDir = rb.linearVelocity.normalized;
+                if (Mathf.Abs(Vector3.Dot(vDir, tan)) < grindAlign) return false; // pas assez parallele
+                grinding = true;
+                grindPath = path;
+                grindS = s;
+                grindSpeed = Vector3.Dot(rb.linearVelocity, tan); // signe = sens de parcours sur le chemin
+                grindDirSign = grindSpeed >= 0f ? 1f : -1f;        // cap fige : la moto gardera ce sens meme en reculant
+                grindBalance = (UnityEngine.Random.value < 0.5f ? -1f : 1f) * UnityEngine.Random.Range(0.3f, 0.45f); // desequilibre initial notable -> a rattraper direct
+                grindBalanceVel = 0f;
+                rb.isKinematic = true; // pilotage 100% chemin -> le solver ne peut plus se battre (zero jitter/enfoncement)
+            }
+
+            // ---- SUIT le chemin par arc-length ----
+            grindSpeed += throttle * grindThrottle * dt * grindDirSign;  // gaz relatif au CAP moto (sinon inverse sur les rails orientes -s)
+            grindS += grindSpeed * dt;                                   // avance sur le chemin
+
+            // EQUILIBRE (pendule inverse) : sans rien faire on penche de + en + du cote ou on penche.
+            // Le STEER rattrape ; l'inertie fait repartir de l'autre cote (overshoot) -> a gerer.
+            grindBalanceVel += grindBalance * grindInstability * dt;   // instabilite (proportionnelle a la penche)
+            grindBalanceVel -= steer * grindBalanceControl * dt;       // correction joueur (steer vers le cote oppose a la penche)
+            grindBalanceVel *= Mathf.Max(0f, 1f - grindBalanceDamp * dt);
+            grindBalance += grindBalanceVel * dt;
+
+            // on decroche au BOUT du rail, au SAUT, ou si l'equilibre est perdu (|balance|>=1). Pas de
+            // decrochage a l'arret : on peut rester immobile tant qu'on tient l'equilibre.
+            bool bail = Input.JumpHeld;
+            bool fell = Mathf.Abs(grindBalance) >= grindFallThreshold;
+            bool onPath = railNet.Sample(grindPath, grindS, out Vector3 pt, out Vector3 tang);
+            if (!onPath || bail || fell)
+            {
+                // sortie : rend le rb dynamique et relance la vitesse le long du rail (garde l'elan).
+                railNet.Sample(grindPath, Mathf.Clamp(grindS, 0f, railNet.Length(grindPath)), out _, out Vector3 exitTan);
+                float sp = Mathf.Max(Mathf.Abs(grindSpeed), grindEnterSpeed);
+                rb.isKinematic = false;
+                Vector3 outVel = exitTan * (grindSpeed >= 0f ? 1f : -1f) * sp;
+                if (bail) outVel += Vector3.up * grindJump;
+                if (fell)
+                {
+                    // EJECTE sur le cote (sens de la chute) + un peu en l'air -> on ne se raccroche pas aussitot
+                    Vector3 side = Vector3.Cross(Vector3.up, exitTan).normalized;
+                    outVel += side * (Mathf.Sign(grindBalance) * grindEject) + Vector3.up * (grindEject * 0.25f);
+                    grindReattachTimer = 0.5f;
+                }
+                rb.linearVelocity = outVel;
+                grinding = false;
+                return false;
+            }
+
+            // gravite projetee sur le rail -> garde/prend de l'elan en descente
+            grindSpeed += Vector3.Dot(Physics.gravity, tang) * grindGravity * dt; // pente -> elan
+            // BOOST pendant le grind (le pilotage normal est court-circuite ici, on le gere nous-memes)
+            boostTimer -= dt; boostCooldownTimer -= dt;
+            if (boostQueued)
+            {
+                boostQueued = false;
+                TriggerBoost(boostSpeedGain, boostDuration);   // flammes/FOV/shake + boostTimer
+                boostCooldownTimer = boostCooldown;
+                grindSpeed += boostSpeedGain * grindDirSign;    // vraie poussee le long du rail
+            }
+            // MEME plafond qu'au sol (+ rallonge de boost) -> pas plus rapide que la conduite normale
+            float maxNow = maxSpeed + (boostTimer > 0f ? boostExtraMaxSpeed : 0f);
+            grindSpeed = Mathf.Clamp(grindSpeed, -maxNow, maxNow);
+
+            // CAP FIXE : la moto garde le sens choisi a l'entree (pas le signe de la vitesse) ->
+            // freiner/reculer = glisse en arriere SANS retourner la moto (comme au sol).
+            Vector3 facing = tang * grindDirSign;
+
+            // POSE la roue SUR le rail (roue = wheelRadius au-dessus du point), corps au-dessus
+            Vector3 desiredMount = pt + Vector3.up * (wheelRadius + grindRideHeight);
+            rb.MovePosition(rb.position + (desiredMount - wheelMount));
+
+            // ORIENTATION : yaw pose fixe (axe Y monde) + ROLL = etat d'equilibre (la moto penche selon
+            // grindBalance -> le joueur VOIT le desequilibre et rattrape au steer).
+            Vector3 facingYawed = Quaternion.AngleAxis(grindYawPose, Vector3.up) * facing;
+            Vector3 balUp = Quaternion.AngleAxis(grindBalance * grindBalanceLean, facingYawed) * Vector3.up;
+            Quaternion target = Quaternion.LookRotation(facingYawed, balUp);
+            rb.MoveRotation(Quaternion.RotateTowards(rb.rotation, target, alignSpeed * dt));
+
+            Grounded = true; Drifting = false; wasGrounded = true;
+            // POSE VISUELLE de grind : la caisse s'incline sur le cote (roulis local z), cosmetique.
+            if (visualBody != null)
+            {
+                Quaternion pose = Quaternion.Euler(0f, 0f, grindVisualLean);
+                visualBody.localRotation = Quaternion.Slerp(visualBody.localRotation, pose, Time.fixedDeltaTime * tiltLerpSpeed);
+            }
+            return true;
         }
 
         // ============ DEBUG : dessine TOUTES les detections physiques du controleur ============

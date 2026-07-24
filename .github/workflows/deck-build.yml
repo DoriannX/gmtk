@@ -24,6 +24,12 @@ jobs:
           restore-keys: |
             Library-
 
+      # Injecte "<numero de run>-<sha court>" dans Application.version : l'overlay de
+      # debug l'affiche en jeu, donc on sait toujours quelle build tourne sur le Deck.
+      - name: Compute version string
+        id: ver
+        run: echo "value=${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build
         uses: game-ci/unity-builder@v4
         env:
@@ -34,6 +40,8 @@ jobs:
         with:
           targetPlatform: StandaloneWindows64
           buildName: gmtk          # -> gmtk.exe, stable path on the Deck
+          versioning: Custom
+          version: ${{ steps.ver.outputs.value }}
 
       # unity-builder writes to build/StandaloneWindows64/
       - name: Zip build
@@ -49,7 +57,7 @@ jobs:
           gh release delete deck-latest --cleanup-tag --yes || true
           gh release create deck-latest gmtk-windows.zip \
             --title "Deck latest" \
-            --notes "Auto Windows build for Steam Deck (Proton). Commit ${GITHUB_SHA::7}."
+            --notes "Auto Windows build for Steam Deck (Proton). Version ${{ steps.ver.outputs.value }} (commit ${GITHUB_SHA::7})."
 
       # Push the same build to itch.io. Skipped automatically until you set the
       # ITCH_TARGET repo variable (Settings > Secrets and variables > Actions > Variables),

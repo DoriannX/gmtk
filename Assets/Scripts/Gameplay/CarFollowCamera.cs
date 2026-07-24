@@ -3,9 +3,9 @@ using UnityEngine.InputSystem;
 
 namespace Gameplay
 {
-    // Camera TPS : orbite autour de la cible controlee a la souris (yaw + pitch),
-    // distance fixe avec lissage. Curseur verrouille en jeu, Escape pour liberer.
-    // Prototype pour tester le feel voiture.
+    // Camera TPS : orbite autour de la cible controlee a la souris ou au stick droit
+    // (yaw + pitch), distance fixe avec lissage. Curseur verrouille en jeu, Escape
+    // pour liberer. Prototype pour tester le feel voiture.
     public class CarFollowCamera : MonoBehaviour
     {
         [SerializeField] private Transform target;
@@ -14,6 +14,7 @@ namespace Gameplay
         [SerializeField] private float distance = 8f;
         [SerializeField] private float height = 1.5f; // point vise au dessus de la cible
         [SerializeField] private float mouseSensitivity = 0.15f; // deg par pixel de delta souris
+        [SerializeField] private float stickSensitivity = 220f;  // deg par seconde a fond de stick droit
         [SerializeField] private float minPitch = -10f;
         [SerializeField] private float maxPitch = 70f;
 
@@ -47,6 +48,15 @@ namespace Gameplay
                 Vector2 delta = Mouse.current.delta.ReadValue();
                 yaw += delta.x * mouseSensitivity;
                 pitch = Mathf.Clamp(pitch - delta.y * mouseSensitivity, minPitch, maxPitch);
+            }
+
+            if (Gamepad.current != null)
+            {
+                // Stick = vitesse angulaire (deg/s), contrairement a la souris qui donne
+                // deja un deplacement : sans deltaTime le look partirait en vrille au framerate.
+                Vector2 look = Gamepad.current.rightStick.ReadValue() * (stickSensitivity * Time.deltaTime);
+                yaw += look.x;
+                pitch = Mathf.Clamp(pitch - look.y, minPitch, maxPitch);
             }
 
             Vector3 pivot = target.position + Vector3.up * height;

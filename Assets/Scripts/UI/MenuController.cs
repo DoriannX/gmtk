@@ -21,6 +21,11 @@ namespace UI
 
             if (playButton != null) playButton.clicked += OnPlayClicked;
             if (quitButton != null) quitButton.clicked += OnQuitClicked;
+
+            // Sans element focus, la manette n'a rien d'ou naviguer : Navigate/Submit
+            // du panel UI Toolkit partent du focus courant. Differe d'une frame, le
+            // panel n'est pas encore attache au moment du OnEnable.
+            if (playButton != null) root.schedule.Execute(() => playButton.Focus());
         }
 
         private void OnDisable()

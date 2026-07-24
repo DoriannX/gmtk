@@ -36,3 +36,6 @@ Thumbs.db
 
 # Crashlytics
 crashlytics-build.properties
+
+# Screenshots de debug pris via MCP : jamais utiles dans le build.
+/Assets/Screenshots/

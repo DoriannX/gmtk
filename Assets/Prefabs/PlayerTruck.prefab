@@ -19907,8 +19907,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 1.2, y: 0.6, z: 2.4}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 1.2375, y: 1.5000002, z: 2.5700006}
+  m_Center: {x: 0, y: 0.96000016, z: 0.48499995}
 --- !u!23 &4329109351734467582
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -20010,10 +20010,13 @@ MonoBehaviour:
   springStiffness: 60
   springDamper: 7
   wheelRayExtra: 0.4
+  alignSnapDistance: 0.6
+  useSuspension: 1
   groundMask:
     serializedVersion: 2
     m_Bits: 4294967295
   alignSpeed: 400
+  normalSmoothSpeed: 12
   boostMinDriftTime: 0.7
   boostImpulse: 8
   jumpSpringBoost: 1.1

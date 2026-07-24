@@ -148,8 +148,66 @@ namespace Gameplay.City
             //    pour que les pietons instancies se posent sur un NavMesh deja pret.
             if (buildSidewalks) BuildSidewalks(root, grid, cs);
 
-            // 4) Vie : rampes sur segments droits + trafic + pietons.
+            // 4) Feux tricolores aux carrefours (visuel ; comportement = TrafficSignal).
+            PlaceTrafficLights(root, grid, cs);
+
+            // 5) Vie : rampes sur segments droits + trafic + pietons.
             SpawnLife(root, grid, cs);
+        }
+
+        private const string TrafficLightPath = "Assets/Models/City/Props/Prop_TrafficLight_A.fbx";
+
+        // Deux tetes de feu (prop Prop_TrafficLight_A) par carrefour : une pour l'axe
+        // NS, une pour l'axe EW, sur deux coins opposes. Chaque tete allume l'ampoule
+        // de son etat via TrafficLightVisual. Sans collider (les voitures passent).
+        private void PlaceTrafficLights(Transform root, CityGrid g, float cs)
+        {
+            var prop = Load(TrafficLightPath);
+            if (prop == null) { Debug.LogWarning("CityBuilder: prop feu introuvable " + TrafficLightPath); return; }
+            const float scale = 3.2f;
+            float off = cs * 0.38f;
+
+            for (int y = 0; y < g.Height; y++)
+                for (int x = 0; x < g.Width; x++)
+                {
+                    if (!IsIntersectionCell(g, x, y)) continue;
+                    Vector3 c = g.CellToWorld(x, y);
+                    // NS : coin +x/+z, oriente vers -Z ; EW : coin -x/-z, tourne 90.
+                    PlaceLightHead(root, prop, c + new Vector3(off, 0f, off), 180f, scale, true);
+                    PlaceLightHead(root, prop, c + new Vector3(-off, 0f, -off), 90f, scale, false);
+                }
+        }
+
+        private void PlaceLightHead(Transform root, GameObject prop, Vector3 pos, float yaw, float scale, bool nsAxis)
+        {
+            GameObject head = InstancePrefab(TrafficLightPath) ?? Instantiate(prop);
+            head.name = "TrafficLight_" + (nsAxis ? "NS" : "EW");
+            head.transform.SetParent(root, false);
+            head.transform.localPosition = pos;
+            head.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+            head.transform.localScale = Vector3.one * scale;
+            foreach (var col in head.GetComponentsInChildren<Collider>(true)) DestroyImmediate(col);
+
+            var mr = head.GetComponentInChildren<MeshRenderer>();
+            if (mr == null) return;
+            int red = -1, amber = -1, green = -1;
+            var mats = mr.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                string n = mats[i] != null ? mats[i].name : "";
+                if (n.Contains("Red")) red = i;
+                else if (n.Contains("Amber")) amber = i;
+                else if (n.Contains("GreenLite")) green = i;
+            }
+            head.AddComponent<TrafficLightVisual>().Bind(mr, red, amber, green, nsAxis);
+        }
+
+        private static bool IsIntersectionCell(CityGrid g, int x, int y)
+        {
+            if (g.At(x, y) != CellType.Road) return false;
+            bool ns = g.At(x, y - 1) == CellType.Road || g.At(x, y + 1) == CellType.Road;
+            bool ew = g.At(x - 1, y) == CellType.Road || g.At(x + 1, y) == CellType.Road;
+            return ns && ew;
         }
 
         // --- Reseau pieton (trottoirs + passages) ------------------------------

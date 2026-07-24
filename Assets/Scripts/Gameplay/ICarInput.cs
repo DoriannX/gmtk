@@ -11,6 +11,7 @@ namespace Gameplay
         bool JumpPressed { get; }
         bool BoostPressed { get; }
         bool HeadlightPressed { get; }
+        bool TrickHeld { get; }   // modificateur figures en l'air (clic droit) : sans -> yaw seul
     }
 
     // Source par defaut : le clavier du joueur (wrappe Core.InputActions).
@@ -22,5 +23,6 @@ namespace Gameplay
         public bool JumpPressed => Core.InputActions.GetJumpPressed();
         public bool BoostPressed => Core.InputActions.GetBoostPressed();
         public bool HeadlightPressed => Core.InputActions.GetHeadlightPressed();
+        public bool TrickHeld => Core.InputActions.GetTrickHeld();
     }
 }

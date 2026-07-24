@@ -1,0 +1,79 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SkyCyberpunk
+  m_Shader: {fileID: 4800000, guid: eee7b6c7ee32517499016e7079c14c94, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _CityGlowFall: 16
+    - _CityGlowInt: 0.8
+    - _CloudBodyCut: 0.18
+    - _CloudDensity: 0.35
+    - _CloudOpacity: 0.3
+    - _CloudScale: 2.2
+    - _CloudSoft: 0.14
+    - _CloudSpeed: 0.012
+    - _HorizonSharp: 1.5
+    - _MidHeight: 0.3
+    - _MilkyInt: 0.6
+    - _MilkyScale: 2
+    - _MilkyTilt: 0.35
+    - _MoonHalo: 4.5
+    - _MoonHaloInt: 0.5
+    - _MoonSize: 0.03
+    - _MoonSoft: 0.004
+    - _StarBright: 2.4
+    - _StarDensity: 190
+    - _StarDensity2: 430
+    - _StarSize: 0.12
+    - _StarSparse: 0.9
+    - _StarSparse2: 0.965
+    - _SunGlow: 200
+    - _SunGlowInt: 0.5
+    - _SunSize: 0.006
+    - _SunSoftness: 0.003
+    - _Twinkle: 2.5
+    - _WashHeight: 14
+    - _WashSpread: 2
+    m_Colors:
+    - _CityGlowA: {r: 0.1, g: 0.85, b: 1.1, a: 1}
+    - _CityGlowB: {r: 1, g: 0.2, b: 0.75, a: 1}
+    - _CloudColor: {r: 0.1, g: 0.06, b: 0.2, a: 1}
+    - _CloudShadow: {r: 0.02, g: 0.02, b: 0.06, a: 1}
+    - _GroundColor: {r: 0.006, g: 0.008, b: 0.022, a: 1}
+    - _HorizonColor: {r: 0.045, g: 0.06, b: 0.135, a: 1}
+    - _MidColor: {r: 0.03, g: 0.02, b: 0.1, a: 1}
+    - _MilkyColor: {r: 0.32, g: 0.28, b: 0.62, a: 1}
+    - _MoonColor: {r: 1.15, g: 1.2, b: 1.3, a: 1}
+    - _MoonDir: {r: 0.28, g: 0.42, b: 0.78, a: 0}
+    - _MoonGlowCol: {r: 0.35, g: 0.5, b: 0.85, a: 1}
+    - _MoonPhaseDir: {r: -0.75, g: 0.1, b: 0.45, a: 0}
+    - _StarColorA: {r: 1, g: 0.85, b: 0.62, a: 1}
+    - _StarColorB: {r: 0.68, g: 0.83, b: 1, a: 1}
+    - _SunColor: {r: 1.6, g: 1.9, b: 2.6, a: 1}
+    - _SunDir: {r: 0.4, g: 0.55, b: -0.7, a: 0}
+    - _SunGlowColor: {r: 0.35, g: 0.5, b: 1, a: 1}
+    - _WashColor: {r: 0.06, g: 0.35, b: 0.55, a: 1}
+    - _ZenithColor: {r: 0.01, g: 0.02, b: 0.06, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

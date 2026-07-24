@@ -102,5 +102,6 @@ namespace Gameplay
         public bool JumpPressed => jumpPulse;
         public bool BoostPressed => boostPulse;
         public bool HeadlightPressed => false;
+        public bool TrickHeld => false; // l'IA ne pilote pas de figures manuelles
     }
 }

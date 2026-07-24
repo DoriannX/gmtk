@@ -63,6 +63,13 @@ namespace Core
             return Keyboard.current.fKey.wasPressedThisFrame;
         }
 
+        // Modificateur "figures en l'air" : clic droit maintenu. Sans lui, l'air
+        // control se limite a une rotation sur soi (yaw) ; avec, flips + spins.
+        public static bool GetTrickHeld()
+        {
+            return Mouse.current != null && Mouse.current.rightButton.isPressed;
+        }
+
         public static bool GetPausePressed()
         {
             if (Keyboard.current == null) return false;

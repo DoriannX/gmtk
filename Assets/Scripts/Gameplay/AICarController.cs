@@ -30,7 +30,17 @@ namespace Gameplay
         [SerializeField] private float rayHeight = 0.5f;      // hauteur des rayons (pare-choc)
         [SerializeField] private LayerMask obstacleMask = ~0; // tout par defaut
 
-        [Header("Errance")]
+        [Header("Circulation (reseau routier)")]
+        [Tooltip("Decalage voie de droite depuis l'axe de la rue (x cellSize). Voie INTERIEURE, degagee des voitures garees au trottoir.")]
+        [SerializeField] private float laneFrac = 0.12f;
+        [SerializeField] private float arriveDist = 2.2f;      // distance pour valider le waypoint courant
+        [SerializeField, Range(0f, 1f)] private float straightBias = 0.7f; // proba de continuer tout droit au carrefour
+        [SerializeField] private float turnSlow = 0.45f;       // facteur de vitesse en approche de virage
+        [SerializeField] private float carFollowGap = 4.5f;    // distance mini derriere la voiture devant
+        [Tooltip("DEBUG/ambient : roule sans conducteur (sinon garee tant qu'aucun pieton).")]
+        [SerializeField] private bool autoDrive = false;
+
+        [Header("Errance (legacy, inutilise)")]
         [SerializeField] private Vector2 headingHold = new Vector2(3f, 7f); // duree avant nouveau cap
         [SerializeField] private float wanderTurn = 45f;      // ecart max du nouveau cap (deg)
         [SerializeField] private float mapBound = 90f;        // demi-taille jouable (Ground 200 -> 90)
@@ -68,6 +78,26 @@ namespace Gameplay
         private float pauseTimer;       // temps avant prochaine pause
         private float pauseLeft;        // temps de pause restant
         private bool blocked;           // arrete par un obstacle ce frame
+
+        // ---- Circulation sur le reseau routier ----
+        // La voiture suit la grille : cellule courante + direction (une des 4),
+        // vise le point "voie de droite" de la cellule suivante, choisit un virage
+        // aux carrefours. Les feux et la priorite se greffent par-dessus (Stage 2).
+        private City.CityGridAuthoring cityAuth;
+        private Vector2Int cell, gridDir;   // cellule + direction en coords grille
+        private Vector3 waypoint;           // cible monde courante (voie de droite)
+        private bool onRoad;                // a accroche la grille au demarrage
+        private Vector2Int reservedInter = NoCell; // intersection reservee (priorite)
+        private static readonly Vector2Int NoCell = new Vector2Int(-9999, -9999);
+        private static readonly Vector2Int[] GridDirs =
+            { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
+        // Qui occupe quelle intersection (une seule voiture a la fois -> priorite/stop).
+        private static readonly Dictionary<Vector2Int, AICarController> InterOwner = new();
+
+        // Reset des statics a chaque entree en play (Reload Domain peut etre off ->
+        // sinon Cars/InterOwner gardent des entrees fantomes de la session precedente).
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics() { Cars.Clear(); InterOwner.Clear(); }
 
         // juice : pivot cosmetique (ne touche jamais la racine physique/raycast)
         private Transform visual;
@@ -116,6 +146,9 @@ namespace Gameplay
             if (bodyT) { bodyRend = bodyT.GetComponent<MeshRenderer>(); bodyBase = bodyRend.material.GetColor("_BaseColor"); }
             var mainCam = Camera.main != null ? Camera.main : FindAnyObjectByType<Camera>();
             if (mainCam) camShake = mainCam.GetComponent<CarFollowCamera>();
+
+            cityAuth = City.CityGridAuthoring.Active;
+            if (autoDrive) InitRoad(); // ambient/debug : demarre la circulation seule
         }
 
         private void OnEnable() { Cars.Add(this); }
@@ -149,10 +182,11 @@ namespace Gameplay
             headingTimer = Random.Range(headingHold.x, headingHold.y);
             pauseTimer = Random.Range(pauseEvery.x, pauseEvery.y);
             if (bubble) bubble.Show("En route !", false, 1.2f);
+            InitRoad(); // accroche la grille et part sur la route
             return true;
         }
 
-        public void ClearDriver() => driver = null;
+        public void ClearDriver() { driver = null; ReleaseInter(); }
 
         // Explosion (boost) : ejecte le conducteur puis detruit la voiture. FX
         // toujours ; shake camera + hitstop seulement si le joueur est l'auteur.
@@ -182,13 +216,13 @@ namespace Gameplay
             CheckBump();
 
             float desired;
-            if (Occupied)
+            bool driving = (Occupied || autoDrive) && crashSpinLeft <= 0f && recoilLeft <= 0f;
+            if (driving)
             {
-                UpdateWander(dt);
-                desired = DecideSpeed();   // remplit "blocked" + oriente l'esquive
-                UpdatePause(dt, ref desired);
+                if (!onRoad) InitRoad();            // (re)accroche la grille au besoin
+                desired = onRoad ? DriveRoad(dt) : 0f;
             }
-            else { desired = 0f; blocked = false; } // vide = garee, ne bouge pas seule
+            else { desired = 0f; blocked = false; } // garee / en plein choc : ne roule pas
             if (stunLeft > 0f) { stunLeft -= dt; desired = 0f; } // etourdi apres un choc
 
             // accel ou freinage vers la vitesse voulue
@@ -420,60 +454,189 @@ namespace Gameplay
         private void OnDisable()
         {
             Cars.Remove(this);
+            ReleaseInter();
             if (visual) visual.DOKill();
             idleTween = null;
         }
 
-        private void UpdateWander(float dt)
-        {
-            headingTimer -= dt;
-            if (headingTimer <= 0f && !blocked)
-            {
-                targetHeading += Random.Range(-wanderTurn, wanderTurn);
-                headingTimer = Random.Range(headingHold.x, headingHold.y);
-            }
+        // ================= Circulation sur le reseau routier =================
 
-            // demi-tour si on sort de la zone jouable
-            Vector3 p = transform.position;
-            if (Mathf.Abs(p.x) > mapBound || Mathf.Abs(p.z) > mapBound)
-            {
-                Vector3 toCenter = (Vector3.zero - p);
-                toCenter.y = 0f;
-                targetHeading = Quaternion.LookRotation(toCenter).eulerAngles.y;
-                headingTimer = Random.Range(headingHold.x, headingHold.y);
-            }
+        // Accroche la voiture a la grille : cellule route la plus proche + direction
+        // initiale alignee sur le cap actuel. Appele a l'entree d'un conducteur / autoDrive.
+        private void InitRoad()
+        {
+            cityAuth = cityAuth != null ? cityAuth : City.CityGridAuthoring.Active;
+            if (cityAuth == null || cityAuth.Grid == null) { onRoad = false; return; }
+            var grid = cityAuth.Grid;
+            Vector3 local = cityAuth.transform.InverseTransformPoint(transform.position);
+            grid.WorldToCell(local, out int x, out int y);
+            Vector2Int c = new Vector2Int(x, y);
+            if (grid.At(c.x, c.y) != City.CellType.Road && !NearestRoad(c, out c)) { onRoad = false; return; }
+            cell = c;
+            gridDir = SnapDir(c);
+            waypoint = WaypointFor(cell, gridDir);
+            onRoad = true;
         }
 
-        // Renvoie la vitesse voulue selon les antennes. Ajuste targetHeading pour esquiver.
-        private float DecideSpeed()
+        // Suit la route : oriente vers le waypoint (voie de droite), avance de cellule
+        // en cellule, choisit un virage aux carrefours. Renvoie la vitesse voulue
+        // (croisiere, ralentie en virage, coupee derriere une voiture ou pour ceder).
+        private float DriveRoad(float dt)
         {
+            var grid = cityAuth.Grid;
+            // re-accroche si projetee loin (knockback) : la cellule courante a trop devie
+            Vector3 local = cityAuth.transform.InverseTransformPoint(transform.position);
+            grid.WorldToCell(local, out int cx, out int cy);
+            if (Mathf.Abs(cx - cell.x) > 1 || Mathf.Abs(cy - cell.y) > 1)
+            {
+                InitRoad();
+                if (!onRoad) return 0f;
+            }
+
+            Vector3 toWp = waypoint - transform.position; toWp.y = 0f;
+            float dist = toWp.magnitude;
+            if (dist < arriveDist)
+            {
+                Vector2Int next = cell + gridDir;
+                if (IsRoad(next)) cell = next;
+                gridDir = ChooseDir(cell, gridDir);
+                if (reservedInter != NoCell && cell != reservedInter) ReleaseInter(); // sortie d'intersection
+                waypoint = WaypointFor(cell, gridDir);
+                toWp = waypoint - transform.position; toWp.y = 0f; dist = toWp.magnitude;
+            }
+
+            if (toWp.sqrMagnitude > 0.01f)
+                targetHeading = Quaternion.LookRotation(toWp).eulerAngles.y;
+
+            float desired = myCruise;
+            Vector2Int upcoming = cell + gridDir;
+            bool nearInter = IsIntersection(upcoming) && dist < arriveDist * 2.2f;
+
+            // ralentit a l'approche d'un carrefour (virage / prudence)
+            if (nearInter) desired *= turnSlow;
+
+            // file d'attente : ralentit / s'arrete derriere la voiture devant.
+            // (on ne teste QUE les autres voitures : les rampes se franchissent, les
+            //  batiments sont evites en restant dans la voie, les pietons = roadkill.)
             blocked = false;
-            Vector3 origin = transform.position + Vector3.up * rayHeight + transform.forward * 1.2f;
+            float ahead = CarAhead();
+            if (ahead <= stopDistance) { blocked = true; desired = 0f; }
+            else if (ahead < carFollowGap)
+                desired = Mathf.Min(desired, myCruise * Mathf.Clamp01(Mathf.InverseLerp(stopDistance, carFollowGap, ahead)));
 
-            float center = CastFeeler(origin, 0f);
-            float left = CastFeeler(origin, -sideAngle);
-            float right = CastFeeler(origin, sideAngle);
-
-            // esquive : si un cote est plus degage, braquer vers lui
-            if (center < feelerLength)
+            // carrefour : s'arrete au feu rouge/orange, sinon cede si l'intersection
+            // est deja prise par une autre voiture (priorite / stop).
+            if (nearInter)
             {
-                if (left > right) targetHeading -= turnRate * 0.5f * Time.deltaTime * 20f;
-                else targetHeading += turnRate * 0.5f * Time.deltaTime * 20f;
+                if (!City.TrafficSignal.CanGo(gridDir)) desired = 0f;      // feu non vert
+                else if (!TryReserve(upcoming)) desired = 0f;             // priorite
             }
 
-            float nearest = Mathf.Min(center, left, right);
-            if (nearest <= stopDistance)
+            return desired;
+        }
+
+        // ---- helpers grille ----
+        private bool IsRoad(Vector2Int c) => cityAuth.Grid.At(c.x, c.y) == City.CellType.Road;
+
+        // Carrefour : cellule route traversee par les DEUX axes (on peut tourner).
+        private bool IsIntersection(Vector2Int c)
+        {
+            if (!IsRoad(c)) return false;
+            bool ns = IsRoad(c + new Vector2Int(0, 1)) || IsRoad(c + new Vector2Int(0, -1));
+            bool ew = IsRoad(c + new Vector2Int(1, 0)) || IsRoad(c + new Vector2Int(-1, 0));
+            return ns && ew;
+        }
+
+        // Grille -> monde : +x = +X, +y = -Z (cf. CityGrid.CellToWorld).
+        private Vector3 DirToWorld(Vector2Int d) => new Vector3(d.x, 0f, -d.y).normalized;
+        private Vector3 CellCenterWorld(Vector2Int c) =>
+            cityAuth.transform.TransformPoint(cityAuth.Grid.CellToWorld(c.x, c.y));
+        // Decalage vers la voie de DROITE (conduite a droite) pour une direction donnee.
+        private Vector3 RightLaneOffset(Vector2Int d) =>
+            Vector3.Cross(Vector3.up, DirToWorld(d)) * (cityAuth.CellSize * laneFrac);
+        private Vector3 WaypointFor(Vector2Int c, Vector2Int d) =>
+            CellCenterWorld(c + d) + RightLaneOffset(d);
+
+        // Direction initiale : parmi les voisins route, celle la plus alignee au cap actuel.
+        private Vector2Int SnapDir(Vector2Int c)
+        {
+            Vector3 fwd = transform.forward; fwd.y = 0f;
+            if (fwd.sqrMagnitude > 1e-4f) fwd.Normalize();
+            Vector2Int best = GridDirs[0]; float bestDot = -2f;
+            foreach (var d in GridDirs)
             {
-                blocked = true;
-                return 0f; // stop net devant l'obstacle
+                if (!IsRoad(c + d)) continue;
+                float dot = Vector3.Dot(fwd, DirToWorld(d));
+                if (dot > bestDot) { bestDot = dot; best = d; }
             }
-            if (nearest < feelerLength)
+            return best;
+        }
+
+        // Choix a un carrefour : tout droit privilegie (straightBias), sinon un virage
+        // valide au hasard, jamais de demi-tour sauf cul-de-sac.
+        private Vector2Int ChooseDir(Vector2Int c, Vector2Int cur)
+        {
+            bool straightOk = IsRoad(c + cur);
+            Vector2Int back = new Vector2Int(-cur.x, -cur.y);
+            var turns = new List<Vector2Int>();
+            foreach (var d in GridDirs)
             {
-                // ralentit proportionnellement a la proximite
-                float t = Mathf.InverseLerp(stopDistance, feelerLength, nearest);
-                return myCruise * Mathf.Clamp01(t);
+                if (d == cur || d == back) continue;
+                if (IsRoad(c + d)) turns.Add(d);
             }
-            return myCruise;
+            if (straightOk && (turns.Count == 0 || Random.value < straightBias)) return cur;
+            if (turns.Count > 0) return turns[Random.Range(0, turns.Count)];
+            if (straightOk) return cur;
+            return IsRoad(c + back) ? back : cur; // cul-de-sac : demi-tour
+        }
+
+        private bool NearestRoad(Vector2Int from, out Vector2Int found)
+        {
+            for (int r = 1; r <= 2; r++)
+                for (int dy = -r; dy <= r; dy++)
+                    for (int dx = -r; dx <= r; dx++)
+                    {
+                        var c = new Vector2Int(from.x + dx, from.y + dy);
+                        if (cityAuth.Grid.At(c.x, c.y) == City.CellType.Road) { found = c; return true; }
+                    }
+            found = from; return false;
+        }
+
+        // Distance a la voiture qui ROULE devant, DANS MA VOIE (filtre lateral), sinon
+        // carFollowGap*1.5. On ignore les voitures garees (decor au trottoir, hors voie)
+        // et celles des voies transverses/opposees.
+        private bool IsCirculating => driver != null || autoDrive;
+        private float CarAhead()
+        {
+            float best = carFollowGap * 1.5f;
+            Vector3 fwd = transform.forward;
+            Vector3 right = Vector3.Cross(Vector3.up, fwd);
+            foreach (var c in Cars)
+            {
+                if (c == this || c == null || !c.IsCirculating) continue;
+                Vector3 to = c.transform.position - transform.position; to.y = 0f;
+                float lon = Vector3.Dot(to, fwd);
+                if (lon <= 0.5f || lon >= best) continue;         // devant, dans la portee
+                if (Mathf.Abs(Vector3.Dot(to, right)) > 1.6f) continue; // dans ma voie
+                best = lon;
+            }
+            return best;
+        }
+
+        // ---- priorite aux intersections (une voiture a la fois) ----
+        private bool TryReserve(Vector2Int inter)
+        {
+            if (reservedInter == inter) return true;
+            if (InterOwner.TryGetValue(inter, out var owner) && owner != null && owner != this) return false;
+            ReleaseInter();
+            InterOwner[inter] = this; reservedInter = inter; return true;
+        }
+
+        private void ReleaseInter()
+        {
+            if (reservedInter == NoCell) return;
+            if (InterOwner.TryGetValue(reservedInter, out var o) && o == this) InterOwner.Remove(reservedInter);
+            reservedInter = NoCell;
         }
 
         // Renvoie la distance au premier obstacle (feelerLength si rien), en ignorant soi-meme.
@@ -487,22 +650,6 @@ namespace Gameplay
                     return hit.distance;
             }
             return feelerLength;
-        }
-
-        private void UpdatePause(float dt, ref float desired)
-        {
-            if (pauseLeft > 0f)
-            {
-                pauseLeft -= dt;
-                desired = 0f; // arret volontaire (feu rouge / hesitation)
-                return;
-            }
-            pauseTimer -= dt;
-            if (pauseTimer <= 0f && !blocked)
-            {
-                pauseLeft = Random.Range(pauseLength.x, pauseLength.y);
-                pauseTimer = Random.Range(pauseEvery.x, pauseEvery.y);
-            }
         }
 
         private void SpinWheels(float dt)

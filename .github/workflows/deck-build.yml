@@ -1,0 +1,67 @@
+name: Deck Build (Windows / Proton)
+
+# Manual trigger only — click "Run workflow" in the Actions tab (web or mobile app).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish the Release
+
+jobs:
+  build:
+    name: Build StandaloneWindows64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Speeds up subsequent builds a lot (Library is the expensive import cache).
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-
+
+      - name: Build
+        uses: game-ci/unity-builder@v4
+        env:
+          # Personal license: paste the contents of your .ulf file into this secret.
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: StandaloneWindows64
+          buildName: gmtk          # -> gmtk.exe, stable path on the Deck
+
+      # unity-builder writes to build/StandaloneWindows64/
+      - name: Zip build
+        run: |
+          cd build/StandaloneWindows64
+          zip -r ../../gmtk-windows.zip .
+
+      # Move the "deck-latest" tag/release to this build so the download URL never changes.
+      - name: Publish Release (deck-latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete deck-latest --cleanup-tag --yes || true
+          gh release create deck-latest gmtk-windows.zip \
+            --title "Deck latest" \
+            --notes "Auto Windows build for Steam Deck (Proton). Commit ${GITHUB_SHA::7}."
+
+      # Push the same build to itch.io. Skipped automatically until you set the
+      # ITCH_TARGET repo variable (Settings > Secrets and variables > Actions > Variables),
+      # e.g. "dorianx/gmtk", and the BUTLER_API_KEY secret.
+      - name: Push to itch.io (butler)
+        if: ${{ vars.ITCH_TARGET != '' }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          curl -L -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip
+          chmod +x butler
+          # Push the raw folder (not the zip) so itch does delta patching.
+          ./butler push build/StandaloneWindows64 "${{ vars.ITCH_TARGET }}:windows" \
+            --userversion "${GITHUB_SHA::7}"

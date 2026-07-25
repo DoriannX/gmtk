@@ -302,7 +302,17 @@ namespace Gameplay.City
 
         // Warpe la tuile le long de la spline. Retourne null si la spline est trop courte ou
         // la tuile invalide. `reuse` evite de reallouer un Mesh a chaque frame de drag.
-        public static Mesh Warp(in Tile tile, Spline spline, Mesh reuse, Deck deck = default(Deck))
+        // Nombre de repetitions de tuile sur une longueur donnee. Expose parce que l'appelant doit
+        // pouvoir preparer un choix de variante PAR repetition avant d'appeler Warp.
+        public static int Repeats(float splineLength, float tileLength)
+            => Mathf.Max(1, Mathf.RoundToInt(splineLength / Mathf.Max(0.01f, tileLength)));
+
+        // `variants` + `pick` : une tuile differente par repetition (passage pieton, egouts).
+        // `pick[rep]` indexe `variants` ; 0 ou hors bornes = la tuile de base. Les variantes du kit
+        // ont EXACTEMENT la meme emprise que la tuile droite (13 x 8), c'est ce qui permet de les
+        // substituer sans toucher au calcul de repetition.
+        public static Mesh Warp(in Tile tile, Spline spline, Mesh reuse, Deck deck = default(Deck),
+                                Tile[] variants = null, int[] pick = null)
         {
             if (!tile.valid) return null;
             float len = spline.GetLength();
@@ -310,7 +320,7 @@ namespace Gameplay.City
 
             // Nombre de repetitions + pas exact : la tuile est etiree/compressee sur Z pour
             // tomber pile sur la longueur de la spline (facteur borne a ~[0.67, 1.33]).
-            int repeats = Mathf.Max(1, Mathf.RoundToInt(len / tile.length));
+            int repeats = Repeats(len, tile.length);
             float step = len / repeats;
 
             // --- LUT de reperes, echantillonnee a distance d'arc EGALE ---
@@ -351,7 +361,16 @@ namespace Gameplay.City
             // le tablier par un ruban plat au niveau du bas de la tuile, normales vers le bas.
             // Ajoute partout et pas seulement sur les ouvrages : au sol il finit sous le
             // trottoir, invisible, et ca evite une branche et un cas particulier a maintenir.
-            int vn = tile.verts.Length;
+            // Les repetitions n'ont plus forcement la meme tuile : les compteurs se cumulent au
+            // lieu de se multiplier.
+            int vn = 0, tn = 0;
+            for (int rep = 0; rep < repeats; rep++)
+            {
+                Tile src = Pick(tile, variants, pick, rep);
+                vn += src.verts.Length;
+                tn += src.tris.Length;
+            }
+
             int soffitV = 2 * (k + 1);
             int soffitT = k * 6;
             // Flancs : 4 bandes (bord droit et gauche, chacune vue de dehors ET de dedans). Les
@@ -360,8 +379,8 @@ namespace Gameplay.City
             bool hasSides = deck.fascia > 0.001f || deck.parapet > 0.001f;
             int sideV = hasSides ? 8 * (k + 1) : 0;
             int sideT = hasSides ? k * 24 : 0;
-            int total = vn * repeats + soffitV + sideV;
-            int triCount = tile.tris.Length * repeats + soffitT + sideT;
+            int total = vn + soffitV + sideV;
+            int triCount = tn + soffitT + sideT;
 
             // Pendant un drag, `repeats` ne change en general pas d'une frame a l'autre : les
             // triangles et les UV sont alors identiques et n'ont pas besoin d'etre re-uploades.
@@ -376,14 +395,15 @@ namespace Gameplay.City
             var outUV = !sameTopology && tile.uv != null ? new Vector2[total] : null;
             var outTris = sameTopology ? null : new int[triCount];
 
+            int baseV = 0, baseT = 0;
             for (int rep = 0; rep < repeats; rep++)
             {
-                int baseV = rep * vn;
+                Tile src = Pick(tile, variants, pick, rep);
                 float dBase = rep * step;
-                for (int i = 0; i < vn; i++)
+                for (int i = 0; i < src.verts.Length; i++)
                 {
-                    Vector3 v = tile.verts[i];
-                    float d = dBase + (v.z / tile.length) * step;
+                    Vector3 v = src.verts[i];
+                    float d = dBase + (v.z / src.length) * step;
 
                     float f = Mathf.Clamp(d / len, 0f, 1f) * k;
                     int s0 = Mathf.Clamp(Mathf.FloorToInt(f), 0, k - 1);
@@ -395,24 +415,26 @@ namespace Gameplay.City
                     // Normales transformees par un repere ORTHONORME -> restent unitaires.
                     // Surtout pas de RecalculateNormals() : ca ecraserait le split hard/soft
                     // edges de l'asset.
-                    if (outN != null)
+                    if (outN != null && src.normals != null)
                     {
-                        Vector3 nv = tile.normals[i];
+                        Vector3 nv = src.normals[i];
                         outN[o] = fr.right * nv.x + fr.up * nv.y + fr.fwd * nv.z;
                     }
-                    if (outT != null)
+                    if (outT != null && src.tangents != null)
                     {
-                        Vector4 tv = tile.tangents[i];
+                        Vector4 tv = src.tangents[i];
                         Vector3 tw = fr.right * tv.x + fr.up * tv.y + fr.fwd * tv.z;
                         outT[o] = new Vector4(tw.x, tw.y, tw.z, tv.w);
                     }
-                    if (outUV != null) outUV[o] = tile.uv[i];   // inchange -> chaque repeat retile
+                    if (outUV != null && src.uv != null) outUV[o] = src.uv[i];   // inchange -> chaque repeat retile
                 }
 
-                if (outTris == null) continue;
-                int baseT = rep * tile.tris.Length;
-                for (int i = 0; i < tile.tris.Length; i++)
-                    outTris[baseT + i] = tile.tris[i] + baseV;
+                if (outTris != null)
+                    for (int i = 0; i < src.tris.Length; i++)
+                        outTris[baseT + i] = src.tris[i] + baseV;
+
+                baseV += src.verts.Length;
+                baseT += src.tris.Length;
             }
 
             // --- ruban du dessous ---
@@ -420,7 +442,7 @@ namespace Gameplay.City
             // (L0,R0,L1) puis (R0,R1,L1) donne cross(b-a, c-a) = -up, donc des faces qui
             // regardent bien vers le sol : vu d'en dessous elles sont pleines, vu d'en haut
             // elles sont cullees et ne peuvent pas masquer la chaussee.
-            int sBase = vn * repeats;
+            int sBase = vn;
             float hw = tile.width * 0.5f;
             for (int s = 0; s <= k; s++)
             {
@@ -444,7 +466,7 @@ namespace Gameplay.City
             }
             if (outTris != null)
             {
-                int tBase = tile.tris.Length * repeats;
+                int tBase = tn;
                 for (int s = 0; s < k; s++)
                 {
                     int l0 = sBase + s * 2, r0 = l0 + 1, l1 = l0 + 2, r1 = l0 + 3;
@@ -461,7 +483,7 @@ namespace Gameplay.City
             if (hasSides)
             {
                 int fBase = sBase + soffitV;
-                int fTri = tile.tris.Length * repeats + soffitT;
+                int fTri = tn + soffitT;
                 float yLo = tile.bottom - deck.fascia;
                 float yHi = deck.parapet > 0.001f ? deck.parapetBase + deck.parapet : tile.bottom;
 
@@ -527,6 +549,17 @@ namespace Gameplay.City
             if (outTris != null) mesh.SetTriangles(outTris, 0, false);   // bounds faites juste apres
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        // Tuile d'une repetition : la variante demandee si elle est valide, la tuile de base
+        // sinon. Un repli et pas une erreur -- une variante absente du kit ou un mesh illisible
+        // doit donner une route normale, pas un trou.
+        private static Tile Pick(in Tile fallback, Tile[] variants, int[] pick, int rep)
+        {
+            if (variants == null || pick == null || rep < 0 || rep >= pick.Length) return fallback;
+            int v = pick[rep];
+            if (v <= 0 || v >= variants.Length || !variants[v].valid) return fallback;
+            return variants[v];
         }
 
         private static Frame Lerp(in Frame a, in Frame b, float u)

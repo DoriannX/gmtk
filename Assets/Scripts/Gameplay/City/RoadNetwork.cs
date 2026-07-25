@@ -41,6 +41,11 @@ namespace Gameplay.City
 
         [Header("Assets de route")]
         [SerializeField] private GameObject tileStraight;
+        [Tooltip("Variante avec passage pieton. Meme emprise que la tuile droite, sinon les " +
+                 "repetitions ne tombent plus juste.")]
+        [SerializeField] private GameObject tilePieton;
+        [Tooltip("Variante avec bouches d'egout. Purement decoratif.")]
+        [SerializeField] private GameObject tileEgouts;
         [SerializeField] private GameObject junction3;
         [SerializeField] private GameObject junction4;
         [SerializeField] private GameObject deadEnd;
@@ -85,6 +90,20 @@ namespace Gameplay.City
         [Tooltip("Cote de la section carree d'une pile, en metres.")]
         [SerializeField] private float pierSize = 1.2f;
 
+        // Passages pietons et bouches d'egout. Trois etats par tuile : AUTO (tire au sort par la
+        // graine), ou force a la main. Le tirage est stable -- meme graine, meme ville -- et
+        // porte sur la POSITION de la tuile, pas sur son index : supprimer un noeud ailleurs ne
+        // doit pas rebattre toute la ville. Le prix : deplacer une route la retire au sort.
+        [Header("Variantes de tuile")]
+        [Tooltip("Meme graine = memes passages pietons et memes egouts.")]
+        [SerializeField] private int variantSeed = 4242;
+        [Tooltip("Proportion des tuiles ELIGIBLES qui recoivent un passage pieton. Seules les " +
+                 "tuiles collees a un croisement le sont : au milieu d'une ligne droite de 70 m, " +
+                 "un passage pieton ne veut rien dire.")]
+        [SerializeField, Range(0f, 1f)] private float pietonChance = 0.45f;
+        [Tooltip("Proportion des autres tuiles qui recoivent des bouches d'egout.")]
+        [SerializeField, Range(0f, 1f)] private float egoutsChance = 0.2f;
+
         [Header("Rendu")]
         [SerializeField] private bool toonShading = true;
         [SerializeField] private Color asphaltColor = new Color(0.24f, 0.24f, 0.26f);
@@ -97,6 +116,14 @@ namespace Gameplay.City
         // --- graphe (seule donnee serialisee) ---
         [SerializeField, HideInInspector] private List<Node> nodes = new List<Node>();
         [SerializeField, HideInInspector] private List<Segment> segments = new List<Segment>();
+
+        // Variante FORCEE a la main sur une tuile, reperee par sa position au metre pres. Une
+        // position et pas un couple (segment, repetition) : les index de segment bougent des
+        // qu'on edite le graphe, alors qu'un passage pieton reste ou on l'a mis. En contrepartie
+        // il est perdu si on deplace la route sous lui, ce qui est le comportement voulu.
+        [System.Serializable]
+        public class TileOverride { public Vector2Int cell; public int variant; }
+        [SerializeField, HideInInspector] private List<TileOverride> tileOverrides = new List<TileOverride>();
         // Faux tant que les hauteurs des noeuds sont des valeurs saisies a la main sur un sol
         // plat. Voir LayOnTerrain : c'est ce drapeau qui distingue la premiere pose (capture des
         // hauteurs d'ouvrage) des suivantes (le relief commande).
@@ -133,6 +160,8 @@ namespace Gameplay.City
         [System.NonSerialized] private Dictionary<GameObject, float> roadwayCache;
         [System.NonSerialized] private RoadMeshWarp.Tile tile;       // brute : bandes pleine longueur
         [System.NonSerialized] private RoadMeshWarp.Tile tileFine;   // decoupee : pour les segments qui courbent
+        [System.NonSerialized] private RoadMeshWarp.Tile[] variants;      // 0 normale, 1 pieton, 2 egouts
+        [System.NonSerialized] private RoadMeshWarp.Tile[] variantsFine;
         // Fleche tolerée sur une longueur de tuile avant de passer a la tuile decoupee. Sous ce
         // seuil, une tuile pleine longueur est indiscernable de la courbe : inutile de payer
         // 5x les triangles. Une ligne droite, meme en pente, reste donc a la tuile brute.
@@ -361,6 +390,8 @@ namespace Gameplay.City
         public IEnumerable<GameObject> KitAssets()
         {
             yield return tileStraight;
+            yield return tilePieton;
+            yield return tileEgouts;
             yield return junction3;
             yield return junction4;
             yield return deadEnd;
@@ -896,6 +927,8 @@ namespace Gameplay.City
 #if UNITY_EDITOR
             const string dir = "Assets/Models/Roads/";
             tileStraight = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Tile_droit.fbx");
+            tilePieton = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Tile_droit_pieton.fbx");
+            tileEgouts = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Tile_droit_egouts.fbx");
             junction3 = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Croisement_3_voies.fbx");
             junction4 = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Croisement_4_voies.fbx");
             deadEnd = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(dir + "SM_Dead_end.fbx");
@@ -979,12 +1012,160 @@ namespace Gameplay.City
             tileReady = true;
             tile = default;
             tileFine = default;
+            // Index 0 = tuile normale, 1 = passage pieton, 2 = egouts. L'ordre est celui de
+            // TileVariant et sert aussi bien au warp qu'au cycle de l'editeur.
+            variants = new RoadMeshWarp.Tile[3];
+            variantsFine = new RoadMeshWarp.Tile[3];
+            PrepareVariant(1, tilePieton);
+            PrepareVariant(2, tileEgouts);
             if (!FirstMesh(tileStraight, out Mesh m, out Matrix4x4 toRoot)) return;
             tile = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false);
             tileFine = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true);
+            variants[0] = tile;
+            variantsFine[0] = tileFine;
             if (!tile.valid)
                 Debug.LogWarning($"[RoadNetwork] Mesh de tuile illisible ou vide ({tileStraight?.name}). " +
                                  "Coche Read/Write Enabled sur le FBX (l'inspector du RoadNetwork propose un bouton).", this);
+        }
+
+        private void PrepareVariant(int index, GameObject asset)
+        {
+            if (asset == null || !FirstMesh(asset, out Mesh m, out Matrix4x4 toRoot)) return;
+            variants[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false);
+            variantsFine[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true);
+        }
+
+        // ---------------------------------------------------------------- variantes de tuile
+
+        public const int VariantNormal = 0, VariantPieton = 1, VariantEgouts = 2, VariantCount = 3;
+        private const float TileCell = 1f;   // quantification de la position d'une tuile, en m
+
+        // Variante de chaque repetition d'un segment. Null quand il n'y a rien a changer, ce qui
+        // evite d'allouer un tableau par segment et par frame de drag sur une ville plate.
+        private int[] TilePicks(int k, Spline spline, bool overpass)
+        {
+            if (!variants[VariantPieton].valid && !variants[VariantEgouts].valid) return null;
+
+            float len = spline.GetLength();
+            int repeats = RoadMeshWarp.Repeats(len, tile.length);
+            int[] pick = null;
+
+            for (int rep = 0; rep < repeats; rep++)
+            {
+                Vector2Int cell = TileCellOf(spline, rep, repeats);
+                int v = Forced(cell, out bool found);
+                if (!found) v = AutoVariant(cell, rep, repeats, overpass);
+                if (v == VariantNormal) continue;
+                if (!variants[v].valid) continue;
+                if (pick == null) pick = new int[repeats];
+                pick[rep] = v;
+            }
+            return pick;
+        }
+
+        // Tirage automatique. Le passage pieton ne sort QUE sur une tuile collee a un croisement,
+        // et jamais sur un ouvrage -- personne ne traverse a 7 m de haut. Les egouts prennent ce
+        // qui reste.
+        private int AutoVariant(Vector2Int cell, int rep, int repeats, bool overpass)
+        {
+            if (overpass) return VariantNormal;
+            bool nearJunction = rep == 0 || rep == repeats - 1;
+            if (nearJunction && Chance(cell, 1) < pietonChance) return VariantPieton;
+            if (!nearJunction && Chance(cell, 2) < egoutsChance) return VariantEgouts;
+            return VariantNormal;
+        }
+
+        private Vector2Int TileCellOf(Spline spline, int rep, int repeats)
+        {
+            float len = spline.GetLength();
+            Vector3 w = transform.TransformPoint(At(spline, (rep + 0.5f) * (len / repeats)));
+            return new Vector2Int(Mathf.RoundToInt(w.x / TileCell), Mathf.RoundToInt(w.z / TileCell));
+        }
+
+        private int Forced(Vector2Int cell, out bool found)
+        {
+            for (int i = 0; i < tileOverrides.Count; i++)
+                if (tileOverrides[i].cell == cell) { found = true; return tileOverrides[i].variant; }
+            found = false;
+            return VariantNormal;
+        }
+
+        // Tirage stable dans [0,1) a partir de la graine et de la position de la tuile.
+        private float Chance(Vector2Int cell, int salt)
+        {
+            unchecked
+            {
+                uint h = (uint)variantSeed * 2654435761u;
+                h ^= (uint)(cell.x * 73856093);
+                h ^= (uint)(cell.y * 19349663);
+                h ^= (uint)(salt * 83492791);
+                h ^= h >> 13; h *= 2246822519u; h ^= h >> 16;
+                return (h & 0xFFFFFF) / 16777216f;
+            }
+        }
+
+        // Fait tourner la variante de la tuile situee sous un point du monde : auto -> pieton ->
+        // egouts -> normale -> auto. Rend la variante posee, ou -1 si aucun segment sous le point.
+        public int CycleTileVariant(Vector3 world, out Vector3 tileCenter)
+        {
+            tileCenter = world;
+            EnsureSplines();
+            int best = -1; float bestD = float.MaxValue; int bestRep = 0, bestReps = 1;
+            Vector3 local = transform.InverseTransformPoint(world);
+            for (int k = 0; k < splineCache.Length; k++)
+            {
+                if (splineCache[k] == null) continue;
+                float len = splineLenCache[k];
+                int reps = RoadMeshWarp.Repeats(len, tile.length);
+                for (int rep = 0; rep < reps; rep++)
+                {
+                    Vector3 c = At(splineCache[k], (rep + 0.5f) * (len / reps));
+                    float d = new Vector2(c.x - local.x, c.z - local.z).sqrMagnitude;
+                    if (d >= bestD) continue;
+                    bestD = d; best = k; bestRep = rep; bestReps = reps;
+                }
+            }
+            if (best < 0) return -1;
+
+            Vector2Int cell = TileCellOf(splineCache[best], bestRep, bestReps);
+            tileCenter = transform.TransformPoint(
+                At(splineCache[best], (bestRep + 0.5f) * (splineLenCache[best] / bestReps)));
+
+            int cur = Forced(cell, out bool found);
+            // Le cycle part de l'AUTO : premier clic = passage pieton, et un tour complet ramene
+            // au tirage automatique plutot que de rester bloque sur "normale".
+            int next = !found ? VariantPieton
+                     : cur == VariantPieton ? VariantEgouts
+                     : cur == VariantEgouts ? VariantNormal
+                     : -1;
+
+            tileOverrides.RemoveAll(o => o.cell == cell);
+            if (next >= 0) tileOverrides.Add(new TileOverride { cell = cell, variant = next });
+            MarkDirty(segments[best].a);
+            MarkDirty(segments[best].b);
+            return next;
+        }
+
+        // Positions des tuiles forcees, pour que l'editeur puisse les montrer.
+        public void ForcedTiles(List<Vector3> outPos, List<int> outVariant)
+        {
+            outPos.Clear();
+            outVariant.Clear();
+            EnsureSplines();
+            for (int k = 0; k < splineCache.Length; k++)
+            {
+                if (splineCache[k] == null) continue;
+                float len = splineLenCache[k];
+                int reps = RoadMeshWarp.Repeats(len, tile.length);
+                for (int rep = 0; rep < reps; rep++)
+                {
+                    Vector2Int cell = TileCellOf(splineCache[k], rep, reps);
+                    int v = Forced(cell, out bool found);
+                    if (!found) continue;
+                    outPos.Add(transform.TransformPoint(At(splineCache[k], (rep + 0.5f) * (len / reps))));
+                    outVariant.Add(v);
+                }
+            }
         }
 
         // ---------------------------------------------------------------- croisements
@@ -1547,7 +1728,10 @@ namespace Gameplay.City
                 parapetBase = SidewalkHeight
             };
 
-            Mesh mesh = RoadMeshWarp.Warp(Curves(spline) ? tileFine : tile, spline, mf.sharedMesh, deck);
+            bool fine = Curves(spline);
+            Mesh mesh = RoadMeshWarp.Warp(fine ? tileFine : tile, spline, mf.sharedMesh, deck,
+                                          fine ? variantsFine : variants,
+                                          TilePicks(k, spline, deck.parapet > 0.001f));
             if (mesh == null) { DestroyChildren(go.transform); DestroyImmediate(go); return; }
             mesh.name = "RoadSeg_" + k;
             mesh.hideFlags = HideFlags.DontSave;

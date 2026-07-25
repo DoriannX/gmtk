@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Gameplay.City;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -110,6 +111,8 @@ namespace Gameplay.EditorTools
                 "Shift+clic sur un noeud : le raccorde (ou termine la chaine si c'est le courant).\n" +
                 "Shift+clic sur une route : insere un noeud dessus (et raccorde -> cree un T).\n" +
                 "Shift+Ctrl+clic sur un noeud : le supprime.\n" +
+                "Ctrl+clic sur une route : variante de la tuile visee " +
+                "(auto -> passage pieton -> egouts -> normale -> auto).\n" +
                 "Outil Rotate (E) : disque sur le noeud selectionne, Ctrl pour un pas de 15 deg.",
                 MessageType.Info);
 
@@ -197,8 +200,10 @@ namespace Gameplay.EditorTools
             if (e.type == EventType.Layout && e.shift) HandleUtility.AddDefaultControl(id);
 
             HandleShiftClick(net, e);
+            HandleTileClick(net, e);
             HandlePlainClick(net, e);
             HandleKeys(net, e);
+            DrawForcedTiles(net);
             DrawNodes(net, e);
             // APRES les poignees, et c'est tout l'interet : ce rattrapage fait e.Use(), donc mis
             // avant il volait le clic aux fleches de la poignee XYZ -- elles tombent a une
@@ -253,6 +258,49 @@ namespace Gameplay.EditorTools
             Repaint();
             SceneView.RepaintAll();
             e.Use();
+        }
+
+        // Ctrl+clic sur une route : fait tourner la variante de la tuile visee.
+        // auto -> passage pieton -> egouts -> normale -> auto. Le premier clic pose donc ce qu'on
+        // vient chercher, et un tour complet rend la tuile au tirage automatique au lieu de la
+        // laisser figee.
+        private void HandleTileClick(RoadNetwork net, Event e)
+        {
+            if (e.type != EventType.MouseDown || e.button != 0) return;
+            if (!e.control || e.shift || e.alt) return;
+
+            Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
+            int seg = net.NearestSegment(ray, out Vector3 onAxis);
+            if (seg < 0) return;
+            if ((HandleUtility.WorldToGUIPoint(onAxis) - e.mousePosition).sqrMagnitude
+                >= SegmentPickRadius * SegmentPickRadius) return;
+
+            Undo.RecordObject(net, "Variante de tuile");
+            net.CycleTileVariant(onAxis, out _);
+            net.RebuildDirty();
+            MarkDirty(net);
+            SceneView.RepaintAll();
+            e.Use();
+        }
+
+        private static readonly List<Vector3> forcedPos = new List<Vector3>();
+        private static readonly List<int> forcedVar = new List<int>();
+
+        // Repere sur les tuiles POSEES A LA MAIN : sans lui, impossible de distinguer un passage
+        // pieton force d'un passage pieton tire au sort, donc impossible de savoir ce qu'un
+        // changement de graine va emporter.
+        private static void DrawForcedTiles(RoadNetwork net)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            net.ForcedTiles(forcedPos, forcedVar);
+            for (int i = 0; i < forcedPos.Count; i++)
+            {
+                Handles.color = forcedVar[i] == RoadNetwork.VariantPieton ? new Color(0.4f, 1f, 0.6f)
+                              : forcedVar[i] == RoadNetwork.VariantEgouts ? new Color(1f, 0.7f, 0.2f)
+                              : new Color(0.6f, 0.6f, 0.6f);
+                float s = HandleUtility.GetHandleSize(forcedPos[i]);
+                Handles.DrawWireDisc(forcedPos[i] + Vector3.up * 0.3f, Vector3.up, s * 0.35f);
+            }
         }
 
         private void HandleKeys(RoadNetwork net, Event e)

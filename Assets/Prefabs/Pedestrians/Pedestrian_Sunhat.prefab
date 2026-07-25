@@ -1,0 +1,279 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &3790786573410996017
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4006512159240502550}
+  - component: {fileID: 4540158789299003531}
+  - component: {fileID: 5478011859123270360}
+  - component: {fileID: 3046800331845917112}
+  - component: {fileID: 4262225538293841797}
+  - component: {fileID: 1440384889607202738}
+  - component: {fileID: 8967243596365259414}
+  m_Layer: 0
+  m_Name: Pedestrian_Sunhat
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4006512159240502550
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 290882048891901921}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &4540158789299003531
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 64c6d30eaeb50794aa020bd1eee71ea8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Gameplay.Pedestrian
+  walkSpeed: 1.4
+  idleDuration: {x: 1, y: 3}
+  wanderRadius: 35
+  agentRadius: 0.35
+  agentAccel: 12
+  faceTurnSpeed: 520
+  carLookRadius: 6
+  curbPause: 0.35
+  flinchStop: 0.45
+  waddleAngle: 7
+  armSwing: 28
+  headBob: 0.025
+  pissedSpeed: 12
+  goreSpeed: 20
+  disturbDistance: 1.3
+  pissedDistance: 4.5
+  horrorRadius: 12
+  horrorFrontDot: 0.1
+  fleeRunSpeed: 2.8
+  fleeDuration: {x: 3, y: 5}
+  driveChance: 0.25
+  carSearchRadius: 14
+  driveDuration: {x: 6, y: 14}
+  sixTilt: 40
+  sixLift: 0.3
+  sixSeesaw: 0.12
+  sixFwd: 0.28
+  sixInward: 0.25
+  sixStep: 0.13
+--- !u!114 &5478011859123270360
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 249826e162c676447894a1be3b674571, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Gameplay.SpeechBubble
+--- !u!114 &3046800331845917112
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e5b47bb31070dc84eba2f3398d8a26cb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Gameplay.PedestrianChatter
+  quietDuration: {x: 4, y: 10}
+  lineDuration: 2.6
+  sixSevenChance: 0.15
+  sixSevenDuration: 3
+  talkRadius: 5
+  faceToFaceDist: 1.5
+  approachTimeout: 10
+  thoughts:
+  - J'ai oublie d'eteindre le four ?
+  - Belle journee pour marcher en rond.
+  - Ou est-ce que j'allais deja...
+  - J'aurais du prendre le bus.
+  - Ce camion roule bizarrement, non ?
+  - Croissant ou pain au chocolat...
+  - Mes pieds me portent, mais vers quoi ?
+  starters:
+  - Salut ! Ca va ?
+  - T'as vu ce camion ?!
+  - Il va pleuvoir tu crois ?
+  - Toujours a trainer ici toi !
+  - T'as pas vu mon chat ?
+  replies:
+  - Ouais ouais, tranquille.
+  - M'en parle pas !
+  - Aucune idee, je fais que passer.
+  - Ha ! Elle est bien bonne.
+  - Faut que je file, a plus !
+  - Si tu le dis...
+--- !u!136 &4262225538293841797
+CapsuleCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Radius: 0.4
+  m_Height: 1.8
+  m_Direction: 1
+  m_Center: {x: 0, y: 0.9, z: 0}
+--- !u!54 &1440384889607202738
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  serializedVersion: 5
+  m_Mass: 1
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_UseGravity: 0
+  m_IsKinematic: 1
+  m_Interpolate: 0
+  m_Constraints: 0
+  m_CollisionDetection: 0
+--- !u!195 &8967243596365259414
+NavMeshAgent:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3790786573410996017}
+  m_Enabled: 1
+  m_AgentTypeID: 0
+  m_Radius: 0.35
+  m_Speed: 1.4
+  m_Acceleration: 12
+  avoidancePriority: 53
+  m_AngularSpeed: 999
+  m_StoppingDistance: 0.25
+  m_AutoTraverseOffMeshLink: 1
+  m_AutoBraking: 1
+  m_AutoRepath: 1
+  m_Height: 1.6
+  m_BaseOffset: 0
+  m_WalkableMask: 4294967295
+  m_ObstacleAvoidanceType: 3
+--- !u!1001 &1204232118277629187
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 4006512159240502550}
+    m_Modifications:
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 1.65
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 1.65
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 1.65
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.7953
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6580856203789086658, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+      propertyPath: m_Name
+      value: Chara_Sunhat
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+--- !u!4 &290882048891901921 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 1494949978050704098, guid: c3f089ae4149f9a41bcd87fcce0b839a, type: 3}
+  m_PrefabInstance: {fileID: 1204232118277629187}
+  m_PrefabAsset: {fileID: 0}

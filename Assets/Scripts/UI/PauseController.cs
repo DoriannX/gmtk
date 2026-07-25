@@ -13,6 +13,7 @@ namespace UI
     public class PauseController : MonoBehaviour
     {
         private VisualElement pausePanel;
+        private Button firstButton;
 
         private void OnEnable()
         {
@@ -22,6 +23,7 @@ namespace UI
 
             var resumeButton = root.Q<Button>("resume-button");
             var quitToMenuButton = root.Q<Button>("quit-to-menu-button");
+            firstButton = resumeButton;
 
             if (resumeButton != null) resumeButton.clicked += OnResumeClicked;
             if (quitToMenuButton != null) quitToMenuButton.clicked += OnQuitToMenuClicked;
@@ -75,6 +77,11 @@ namespace UI
         {
             if (pausePanel == null) return;
             pausePanel.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+
+            // Sans element focus, la manette n'a rien d'ou naviguer. Differe d'une
+            // frame : un element en display:none ne peut pas prendre le focus.
+            if (visible && firstButton != null)
+                pausePanel.schedule.Execute(() => firstButton.Focus());
         }
     }
 }

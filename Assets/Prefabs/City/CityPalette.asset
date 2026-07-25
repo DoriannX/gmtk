@@ -1,0 +1,194 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7750b9cb4d59cd4fa8cff3aa005e7fc, type: 3}
+  m_Name: CityPalette
+  m_EditorClassIdentifier: Assembly-CSharp::Gameplay.City.CityPalette
+  entries:
+  - prefab: {fileID: 6655456527176158583, guid: b4f5e83ce73c98c4091a908ce3de57ac, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 11.853174, y: 33.194714, z: 19.462366}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -178 -> 180 deg, confiance 0.02 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 2681274687919087827, guid: 8c3314fb174554a44a0660b3530efb6a, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 12.052621, y: 30.419777, z: 19.138187}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -151 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 7189480819319736153, guid: 4c250b6946b07144ca054303a4680596, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 8.684452, y: 30.419777, z: 14.120697}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -152 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 3106157644712801079, guid: af21eb1bc453dd3459ac8458ca6bd8fc, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 90
+    footprint: {x: 12.19386, y: 11.607853, z: 11.776562}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'FBX: Immeuble__01. facade auto 125 -> 90 deg, confiance 0.08 : A VERIFIER
+      (batiment symetrique ?)'
+  - prefab: {fileID: 4575978101723653180, guid: fc0de76657718ba4287877ccdba9f852, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 10.479531, y: 11.607853, z: 10.481575}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: facade auto 166 -> 180 deg, confiance 0.11
+  - prefab: {fileID: 3683763978634551931, guid: afd57ae8605c6b94fb95c4472c1c203f, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 11.296457, y: 16.011295, z: 10.970193}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: facade auto 141 -> 180 deg, confiance 0.09
+  - prefab: {fileID: 567945928683435818, guid: e3b0bba16236fa544ad60b6068818901, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 8.718417, y: 32.556183, z: 8.270426}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto 161 -> 180 deg, confiance 0.04 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 6432085825534307061, guid: d6ef311cdb54912408c7ea87d33193f7, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 270
+    footprint: {x: 10.082897, y: 27.34985, z: 10.430155}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -81 -> 270 deg, confiance 0.04 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 1461427522242401450, guid: af8ef3be327a5cb4d9084ce4faae135a, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 13.116526, y: 24.830471, z: 13.066232}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -144 -> 180 deg, confiance 0.02 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 3983197891153996076, guid: daa44fb89bee311499d3055810a613e6, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 8.113227, y: 29.329075, z: 8.113225}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto -150 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 5730392603157874731, guid: b1d0b0559a3a6cf4c80edfc616a01f0d, type: 3}
+    layer: 0
+    enabled: 1
+    weight: 1
+    facadeYaw: 180
+    footprint: {x: 8.449215, y: 20.21555, z: 10.342735}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'facade auto 159 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
+      ?)'
+  - prefab: {fileID: 2429648482012378150, guid: 23a09912b56eff44b83417aaf57dd210, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 6.240825, y: 5.0892715, z: 2.3094776}
+    site: 0
+    align: 1
+    scaleJitter: 0.12
+    note: 'pose : Toit, collage : Normale'
+  - prefab: {fileID: 8695557849332665037, guid: 63c6990f30af2764da4b9fb4597ca134, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 7.674838, y: 12.381833, z: 17.969225}
+    site: 1
+    align: 2
+    scaleJitter: 0.12
+    note: 'pose : Facade, collage : Mur'
+  - prefab: {fileID: 1778461185350043942, guid: 358e6e6f5465578418ef4a2815dce5bb, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.4133947, y: 1.4839687, z: 0.89616776}
+    site: 2
+    align: 0
+    scaleJitter: 0.12
+    note: 'pose : Pied, collage : Sol'
+  - prefab: {fileID: 4742875675869552792, guid: 45c2e4df7085f0f4f80fe4d01c844ca9, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.1339784, y: 6.234998, z: 10.010241}
+    site: 1
+    align: 2
+    scaleJitter: 0.12
+    note: 'pose : Facade, collage : Mur'
+  - prefab: {fileID: 6651530135850700525, guid: 2408ba077dd9e4348aeee7638a8dc659, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.329963, y: 1.112021, z: 0.14759207}
+    site: 2
+    align: 0
+    scaleJitter: 0.12
+    note: 'pose : Pied, collage : Sol'
+  - prefab: {fileID: 1067412359295320844, guid: 1da078eba298fe44ba6cf0cad8d6fdbf, type: 3}
+    layer: 1
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.35655403, y: 2.023638, z: 3.5824912}
+    site: 2
+    align: 2
+    scaleJitter: 0.12
+    note: 'pose : Pied, collage : Mur'

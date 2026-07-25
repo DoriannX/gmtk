@@ -13,6 +13,7 @@ namespace UI
     public class GameOverController : MonoBehaviour
     {
         private VisualElement gameOverPanel;
+        private Button firstButton;
 
         private void OnEnable()
         {
@@ -21,6 +22,7 @@ namespace UI
 
             var retryButton = root.Q<Button>("retry-button");
             var menuButton = root.Q<Button>("menu-button");
+            firstButton = retryButton;
 
             if (retryButton != null) retryButton.clicked += OnRetryClicked;
             if (menuButton != null) menuButton.clicked += OnMenuClicked;
@@ -68,6 +70,11 @@ namespace UI
         {
             if (gameOverPanel == null) return;
             gameOverPanel.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+
+            // Sans element focus, la manette n'a rien d'ou naviguer. Differe d'une
+            // frame : un element en display:none ne peut pas prendre le focus.
+            if (visible && firstButton != null)
+                gameOverPanel.schedule.Execute(() => firstButton.Focus());
         }
     }
 }

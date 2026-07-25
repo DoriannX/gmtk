@@ -106,6 +106,11 @@ namespace Gameplay.City
         private const string CapName = "Dessous";
         private const string PierName = "Pile_";
         private const string JunctionPier = "PileJct_";
+        // Enfoncement du sommet d'une pile sous la chaussee. Assez pour qu'aucun coin ne ressorte
+        // au z-fighting, assez peu pour rester dans l'epaisseur de la route (0,63 m avec la
+        // retombee) et ne jamais laisser de jour.
+        private const float PierBite = 0.05f;
+        private const float MaxJunctionPier = 2.5f;   // cote max d'une pile de croisement
         private const float CapAbove = 1.5f;      // au-dela, le croisement est un OUVRAGE : on ferme son dessous
         private const HideFlags GenFlags = HideFlags.DontSave | HideFlags.NotEditable;
         private const float MinSegment = 2f;      // bras plus proches que ca -> segment saute
@@ -433,12 +438,14 @@ namespace Gameplay.City
 
                 Vector3 w = NodeWorld(i);
                 float ground = GroundUnder(w);
-                float side = Mathf.Max(pierSize, JunctionRadius(i) * 0.5f);
+                // Section bornee : plus la pile est large, plus le point bas de son emprise
+                // s'eloigne sous un carrefour en pente, et plus le jour se creuse.
+                float side = Mathf.Clamp(JunctionRadius(i) * 0.4f, pierSize, MaxJunctionPier);
                 float halfSide = side * 0.5f;
 
-                // Le carrefour est COUCHE dans la pente : le dessous de son bord bas est
-                // nettement sous son centre. Le sommet de la pile se cale donc sur le plus BAS
-                // de ses quatre coins -- cale sur le centre, elle ressortait en plein bitume.
+                // Le carrefour est COUCHE dans la pente : sa surface a l'aplomb du bord bas est
+                // nettement sous son centre. Le sommet de la pile se cale donc sur le plus BAS de
+                // ses quatre coins -- cale sur le centre, elle ressortait en plein bitume.
                 float surf = float.MaxValue;
                 for (int c = 0; c < 4; c++)
                 {
@@ -447,7 +454,9 @@ namespace Gameplay.City
                     surf = Mathf.Min(surf, JunctionSurfaceY(i, new Vector3(w.x + ox, 0f, w.z + oz)));
                 }
 
-                float top = surf - SidewalkHeight + tile.bottom - deck.fascia;
+                // Comme pour les segments : la chaussee, moins une morsure. Le centre d'un
+                // croisement est au niveau de la CHAUSSEE, d'ou le retrait du trottoir.
+                float top = surf - SidewalkHeight - PierBite;
                 float h = top - ground;
                 if (h < 1f) continue;
                 if (Obstructed(w, top, ground, halfSide)) continue;
@@ -1241,21 +1250,55 @@ namespace Gameplay.City
         private void AddCap(Transform wrapper, Bounds ab, float recenterY, Material mat)
         {
             float hx = ab.extents.x, hz = ab.extents.z;
-            float y = ab.min.y + recenterY - 0.01f;   // 1 cm plus bas : anti z-fighting avec les rares faces basses de l'asset
+            float top = ab.min.y + recenterY - 0.01f;   // 1 cm plus bas : anti z-fighting avec les rares faces basses de l'asset
+            // MEME retombee que les segments. Sans elle, un croisement leve est une feuille de
+            // papier : c'est visible en soi, et ca prive la pile de toute epaisseur ou se cacher
+            // -- soit elle ressort a travers le bitume, soit elle s'arrete dessous en laissant un
+            // jour. Les deux se soignent ici.
+            float y = top - Mathf.Max(0f, deckFascia);
+
+            var v = new System.Collections.Generic.List<Vector3>();
+            var nrm = new System.Collections.Generic.List<Vector3>();
+            var tris = new System.Collections.Generic.List<int>();
+
+            // Fond, normales vers le sol.
+            v.Add(new Vector3(-hx, y, -hz)); v.Add(new Vector3(hx, y, -hz));
+            v.Add(new Vector3(-hx, y, hz)); v.Add(new Vector3(hx, y, hz));
+            for (int i = 0; i < 4; i++) nrm.Add(Vector3.down);
+            tris.AddRange(new[] { 0, 1, 2, 1, 3, 2 });
+
+            // Quatre flancs. Chacun est une bande verticale du dessous jusqu'au bas de l'asset,
+            // orientee vers l'exterieur.
+            AddSkirt(v, nrm, tris, new Vector3(-hx, y, -hz), new Vector3(hx, y, -hz), top, Vector3.back);
+            AddSkirt(v, nrm, tris, new Vector3(hx, y, hz), new Vector3(-hx, y, hz), top, Vector3.forward);
+            AddSkirt(v, nrm, tris, new Vector3(-hx, y, hz), new Vector3(-hx, y, -hz), top, Vector3.left);
+            AddSkirt(v, nrm, tris, new Vector3(hx, y, -hz), new Vector3(hx, y, hz), top, Vector3.right);
 
             var mesh = new Mesh { name = "JunctionCap" };
-            mesh.SetVertices(new System.Collections.Generic.List<Vector3> {
-                new Vector3(-hx, y, -hz), new Vector3(hx, y, -hz),
-                new Vector3(-hx, y,  hz), new Vector3(hx, y,  hz) });
-            mesh.SetNormals(new System.Collections.Generic.List<Vector3> {
-                Vector3.down, Vector3.down, Vector3.down, Vector3.down });
-            mesh.SetTriangles(new int[] { 0, 1, 2, 1, 3, 2 }, 0);
+            mesh.SetVertices(v);
+            mesh.SetNormals(nrm);
+            mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
 
             var go = new GameObject(CapName);
             go.transform.SetParent(wrapper, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterial = mat;
+        }
+
+        // Bande verticale du bas (a -> b, a la hauteur de a.y) jusqu'a `top`. L'ordre de a et b
+        // fixe le sens des faces : parcourir le contour dans le sens trigo laisse les normales
+        // dehors.
+        private static void AddSkirt(System.Collections.Generic.List<Vector3> v,
+                                     System.Collections.Generic.List<Vector3> nrm,
+                                     System.Collections.Generic.List<int> tris,
+                                     Vector3 a, Vector3 b, float top, Vector3 outward)
+        {
+            int i = v.Count;
+            v.Add(a); v.Add(b);
+            v.Add(new Vector3(a.x, top, a.z)); v.Add(new Vector3(b.x, top, b.z));
+            for (int k = 0; k < 4; k++) nrm.Add(outward);
+            tris.AddRange(new[] { i, i + 2, i + 1, i + 1, i + 2, i + 3 });
         }
 
         // La spline s'ecarte-t-elle assez d'une droite pour qu'une tuile pleine longueur se voie ?
@@ -1496,16 +1539,20 @@ namespace Gameplay.City
                 Vector3 world = transform.TransformPoint(local);
                 float ground = GroundUnder(world);
 
-                // Le tablier est en PENTE : son dessous a l'aplomb du bord amont de la pile est
-                // plus bas qu'a son axe. Sans ce minimum sur l'emprise, le coin de la pile
-                // ressort a travers la chaussee. Le devers, lui, est nul (la tuile reste plate en
+                // Le tablier est en PENTE : sa surface a l'aplomb du bord aval de la pile est plus
+                // basse qu'a son axe. On vise donc le point le plus BAS de l'emprise, ce qui
+                // garantit qu'aucun coin ne ressort. Le devers est nul (la tuile reste plate en
                 // travers), deux echantillons le long de l'axe suffisent.
                 float dt = halfSide / Mathf.Max(1f, len);
                 float lowest = Mathf.Min(world.y,
                     Mathf.Min(transform.TransformPoint(SplinePoint(spline, Mathf.Clamp01(t - dt))).y,
                               transform.TransformPoint(SplinePoint(spline, Mathf.Clamp01(t + dt))).y));
 
-                float top = lowest + deckBottom + SurfaceY;
+                // On vise la CHAUSSEE et pas le dessous du tablier : la pile s'enfonce dans
+                // l'epaisseur de la route au lieu de s'arreter dessous. Viser le dessous laissait
+                // un jour de 3 a 44 cm sur les segments, et jusqu'a 1,5 m au bout d'une rampe --
+                // le minimum pris sur une emprise inclinee descend vite.
+                float top = lowest + SurfaceY - PierBite;
                 float h = top - ground;
                 // Sous cette hauteur la pile serait un caillou coince entre le sol et le tablier :
                 // c'est le cas des abords d'ouvrage, ou le remblai monte deja chercher la route.

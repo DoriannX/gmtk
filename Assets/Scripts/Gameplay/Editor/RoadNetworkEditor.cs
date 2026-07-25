@@ -97,12 +97,14 @@ namespace Gameplay.EditorTools
 
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(
+                "Clic sur un noeud OU sur une route : selectionne le noeud (poignee XYZ, " +
+                "fleche verte = hauteur).\n" +
+                "Suppr : supprime le noeud selectionne.\n" +
                 "Shift+clic : pose un noeud et le relie au precedent.\n" +
                 "Shift+clic sur un noeud : le raccorde (ou termine la chaine si c'est le courant).\n" +
                 "Shift+clic sur une route : insere un noeud dessus (et raccorde -> cree un T).\n" +
                 "Shift+Ctrl+clic sur un noeud : le supprime.\n" +
-                "Sans shift : les poignees deplacent les noeuds.\n" +
-                "Outil Rotate (touche E) : disques pour orienter un bout de route.",
+                "Outil Rotate (E) : disque sur le noeud selectionne, Ctrl pour un pas de 15 deg.",
                 MessageType.Info);
 
             EditorGUILayout.LabelField($"{net.NodeCount} noeuds / {net.SegmentCount} segments");
@@ -141,19 +143,23 @@ namespace Gameplay.EditorTools
                     MarkDirty(net);
                 }
 
-                // HAUTEUR : c'est tout ce qu'il faut pour un pont. Les noeuds sont deja en
-                // Vector3 et RoadMeshWarp encaisse une spline qui monte, mais la poignee de
-                // scene est une FreeMoveHandle (plan camera) -> lever proprement au drag est
-                // illusoire. Un champ, plus la fleche verticale dessinee en scene.
-                Vector3 wp = net.NodeWorld(selected);
+                // HAUTEUR AU-DESSUS DU RELIEF, et pas hauteur absolue : c'est elle qui a un sens
+                // (un pont est "a +7 au-dessus du terrain", pas "a y = 5.4"), et c'est elle que
+                // le noeud garde quand on regraine le bruit. La poignee verte de la scene fait
+                // la meme chose a la souris ; le champ reste pour saisir une valeur exacte.
+                float lift = net.NodeLift(selected);
                 EditorGUILayout.BeginHorizontal();
-                float nh = EditorGUILayout.FloatField($"Noeud {selected} : hauteur (m)", wp.y);
-                if (GUILayout.Button("0", GUILayout.Width(24f))) nh = 0f;
+                float nl = EditorGUILayout.FloatField(
+                    new GUIContent($"Noeud {selected} : hauteur / relief (m)",
+                                   "0 = pose au sol. Au-dela de 1,5 m le segment devient un " +
+                                   "OUVRAGE : garde-corps, piles, et le sol passe dessous."),
+                    lift);
+                if (GUILayout.Button("0", GUILayout.Width(24f))) nl = 0f;
                 EditorGUILayout.EndHorizontal();
-                if (!Mathf.Approximately(nh, wp.y))
+                if (!Mathf.Approximately(nl, lift))
                 {
                     Undo.RecordObject(net, "Lever noeud route");
-                    net.SetNodeWorld(selected, new Vector3(wp.x, nh, wp.z));
+                    net.SetNodeLift(selected, nl);
                     net.RebuildDirty();
                     MarkDirty(net);
                 }
@@ -185,8 +191,62 @@ namespace Gameplay.EditorTools
             if (e.type == EventType.Layout && e.shift) HandleUtility.AddDefaultControl(id);
 
             HandleShiftClick(net, e);
+            HandlePlainClick(net, e);
+            HandleKeys(net, e);
             DrawNodes(net, e);
             DrawPendingLink(net, e);
+        }
+
+        // Clic simple : SELECTIONNER UN NOEUD, pas le pan de route.
+        //
+        // Sans ca, cliquer une route attrape le `Seg_k` genere, l'inspecteur bascule dessus et on
+        // perd l'outil -- alors qu'un segment est derive, il n'y a rien a y regler. On rattrape
+        // donc le clic tant qu'il tombe sur un noeud OU sur une route, et on selectionne le noeud
+        // le plus proche : c'est lui qu'on voulait editer.
+        //
+        // Le clic dans le vide n'est PAS capture : la selection normale de Unity doit continuer
+        // de marcher, sinon on ne peut plus sortir de l'outil en cliquant a cote.
+        private void HandlePlainClick(RoadNetwork net, Event e)
+        {
+            if (e.type != EventType.MouseDown || e.button != 0) return;
+            if (e.shift || e.alt || e.control) return;
+
+            int hit = PickNode(net, e.mousePosition);
+            if (hit >= 0)
+            {
+                // Pas de e.Use() : la poignee dessinee juste apres doit pouvoir prendre le drag
+                // dans le meme evenement, sinon il faut cliquer deux fois pour bouger un noeud.
+                selected = hit;
+                Repaint();
+                return;
+            }
+
+            Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
+            int seg = net.NearestSegment(ray, out Vector3 onAxis);
+            if (seg < 0) return;
+            if ((HandleUtility.WorldToGUIPoint(onAxis) - e.mousePosition).sqrMagnitude
+                >= SegmentPickRadius * SegmentPickRadius) return;
+
+            var s = net.SegmentAt(seg);
+            float da = (net.NodeWorld(s.a) - onAxis).sqrMagnitude;
+            float db = (net.NodeWorld(s.b) - onAxis).sqrMagnitude;
+            selected = da <= db ? s.a : s.b;
+            Repaint();
+            SceneView.RepaintAll();
+            e.Use();   // ici oui : sinon Unity selectionne le Seg_k sous le curseur
+        }
+
+        private void HandleKeys(RoadNetwork net, Event e)
+        {
+            if (e.type != EventType.KeyDown || selected < 0 || selected >= net.NodeCount) return;
+            if (e.keyCode != KeyCode.Delete && e.keyCode != KeyCode.Backspace) return;
+
+            Undo.RecordObject(net, "Supprimer noeud route");
+            net.RemoveNode(selected);
+            selected = -1;
+            net.FullRebuild();
+            MarkDirty(net);
+            e.Use();
         }
 
         private void HandleShiftClick(RoadNetwork net, Event e)
@@ -266,61 +326,64 @@ namespace Gameplay.EditorTools
                 float handle = HandleUtility.GetHandleSize(p);
                 Handles.color = i == selected ? new Color(1f, 0.85f, 0.2f) : new Color(0.3f, 0.9f, 1f);
 
-                if (rotate)
+                // Le disque de rotation ne sort que sur le noeud SELECTIONNE. Sur tous les
+                // noeuds, les disques se recouvrent des que la ville est un peu dense et on
+                // tourne systematiquement le mauvais.
+                if (rotate && i == selected)
                 {
                     EditorGUI.BeginChangeCheck();
+                    // Ctrl = pas de 15 deg, comme le Rotate de Unity. Sans lui, aligner un bout
+                    // de route sur un axe se joue au pixel.
+                    float snap = e.control ? 15f : 0f;
                     Quaternion nq = Handles.Disc(Quaternion.Euler(0f, net.NodeYaw(i), 0f),
-                        p, Vector3.up, handle * 0.7f, false, 0f);
-                    if (!EditorGUI.EndChangeCheck()) continue;
+                        p, Vector3.up, handle * 0.7f, false, snap);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        if (!draggingNode) { draggingNode = true; net.BeginDrag(); }
+                        Undo.RecordObject(net, "Tourner noeud route");
+                        net.SetNodeYaw(i, nq.eulerAngles.y);
+                        net.RebuildDirty();
+                        MarkDirty(net);
+                    }
+                    Label(net, i, p, handle);
+                    continue;
+                }
+                // Sous l'outil Rotate, les autres noeuds sont dessines mais pas attrapables : une
+                // poignee de deplacement active pendant qu'on tourne fait bouger un noeud voisin
+                // par accident. Le clic simple suffit pour changer de noeud selectionne.
+                if (rotate)
+                {
+                    if (e.type == EventType.Repaint)
+                        Handles.SphereHandleCap(0, p, Quaternion.identity, handle * 0.12f,
+                                                EventType.Repaint);
+                    continue;
+                }
+
+                if (i == selected)
+                {
+                    // Poignee XYZ complete sur le noeud selectionne : la fleche verte leve, les
+                    // fleches rouge et bleue trainent au sol. Une FreeMoveHandle travaille dans
+                    // le PLAN CAMERA, ce qui rend la hauteur inatteignable a la souris -- c'est
+                    // ce qui obligeait a passer par le champ de l'inspecteur.
+                    EditorGUI.BeginChangeCheck();
+                    Vector3 moved = Handles.PositionHandle(p, Quaternion.identity);
+                    if (!EditorGUI.EndChangeCheck()) { Label(net, i, p, handle); continue; }
 
                     if (!draggingNode) { draggingNode = true; net.BeginDrag(); }
-                    Undo.RecordObject(net, "Tourner noeud route");
-                    net.SetNodeYaw(i, nq.eulerAngles.y);
+                    // Deplacement horizontal seul -> on recolle au sol en gardant la hauteur
+                    // d'ouvrage. Des que la hauteur est touchee, c'est l'utilisateur qui commande
+                    // et on ne recolle plus : sinon la fleche verte serait annulee a chaque frame.
+                    if (net.SnapToGround && Mathf.Abs(moved.y - p.y) < 1e-4f)
+                        moved = Reground(net, p, moved);
+
+                    Undo.RecordObject(net, "Deplacer noeud route");
+                    net.SetNodeWorld(i, moved);
                     net.RebuildDirty();
                     MarkDirty(net);
                     continue;
                 }
 
-                // Fleche verticale sur le noeud selectionne : la seule facon de lever un noeud
-                // a la souris, la FreeMoveHandle en dessous travaillant dans le plan camera.
-                if (i == selected)
-                {
-                    Handles.color = new Color(0.4f, 1f, 0.5f);
-                    EditorGUI.BeginChangeCheck();
-                    Vector3 up = Handles.Slider(p, Vector3.up, handle * 0.9f,
-                                                Handles.ArrowHandleCap, 0.25f);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        if (!draggingNode) { draggingNode = true; net.BeginDrag(); }
-                        Undo.RecordObject(net, "Lever noeud route");
-                        net.SetNodeWorld(i, new Vector3(p.x, up.y, p.z));
-                        net.RebuildDirty();
-                        MarkDirty(net);
-                        continue;
-                    }
-                    Handles.color = new Color(1f, 0.85f, 0.2f);
-                }
-
-                EditorGUI.BeginChangeCheck();
-                Vector3 np = Handles.FreeMoveHandle(p, handle * 0.12f, Vector3.zero, Handles.SphereHandleCap);
-                if (!EditorGUI.EndChangeCheck()) continue;
-
-                if (!draggingNode) { draggingNode = true; net.BeginDrag(); }
-                // FreeMoveHandle deplace dans le PLAN CAMERA : on reprojette au sol pour que le
-                // drag donne bien la sensation de trainer le point sur la map. Un noeud DEJA
-                // leve garde sa hauteur au-dessus du sol -- sans ca, deplacer un tablier de pont
-                // le rabattrait a la rue et il n'y aurait aucun moyen de retoucher un ouvrage.
-                if (net.SnapToGround)
-                {
-                    float lift = p.y - RayToGround(net, new Ray(p + Vector3.up * 500f, Vector3.down)).y;
-                    np = RayToGround(net, new Ray(np + Vector3.up * 500f, Vector3.down))
-                         + Vector3.up * lift;
-                }
-
-                Undo.RecordObject(net, "Deplacer noeud route");
-                net.SetNodeWorld(i, np);
-                net.RebuildDirty();
-                MarkDirty(net);
+                PickHandle(net, i, p, handle);
             }
 
             if (draggingNode && (e.type == EventType.MouseUp || e.rawType == EventType.MouseUp))
@@ -328,6 +391,44 @@ namespace Gameplay.EditorTools
                 draggingNode = false;
                 net.EndDrag();       // pose les MeshCollider differes pendant le drag
             }
+        }
+
+        // Noeud non selectionne : une bille qu'on peut attraper directement. Elle traine au sol
+        // en conservant la hauteur d'ouvrage -- pas de poignee XYZ, elle encombrerait la vue sur
+        // les dizaines de noeuds qu'on n'edite pas.
+        private void PickHandle(RoadNetwork net, int i, Vector3 p, float handle)
+        {
+            EditorGUI.BeginChangeCheck();
+            Vector3 np = Handles.FreeMoveHandle(p, handle * 0.12f, Vector3.zero, Handles.SphereHandleCap);
+            if (!EditorGUI.EndChangeCheck()) return;
+
+            if (!draggingNode) { draggingNode = true; net.BeginDrag(); }
+            selected = i;   // on edite ce qu'on attrape
+            if (net.SnapToGround) np = Reground(net, p, np);
+
+            Undo.RecordObject(net, "Deplacer noeud route");
+            net.SetNodeWorld(i, np);
+            net.RebuildDirty();
+            MarkDirty(net);
+        }
+
+        // Repose un noeud deplace horizontalement, en gardant sa hauteur au-dessus du sol : sans
+        // ca, deplacer un tablier de pont le rabattrait a la rue et un ouvrage deviendrait
+        // intouchable.
+        private static Vector3 Reground(RoadNetwork net, Vector3 from, Vector3 to)
+        {
+            float lift = from.y - RayToGround(net, new Ray(from + Vector3.up * 500f, Vector3.down)).y;
+            return RayToGround(net, new Ray(to + Vector3.up * 500f, Vector3.down)) + Vector3.up * lift;
+        }
+
+        // Etiquette du noeud selectionne : son index, et sa hauteur AU-DESSUS DU RELIEF -- le
+        // seul chiffre stable, la hauteur absolue bougeant des qu'on regraine le bruit.
+        private static void Label(RoadNetwork net, int i, Vector3 p, float handle)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            float lift = net.NodeLift(i);
+            Handles.Label(p + Vector3.up * (handle * 0.6f),
+                          $"n{i}  {(lift >= 0f ? "+" : "")}{lift:F1} m");
         }
 
         // Ligne fantome entre le noeud courant et la souris tant que shift est tenu.

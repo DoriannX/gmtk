@@ -178,6 +178,21 @@ namespace Gameplay.City
 
         public float NodeYaw(int i) => nodes[i].yaw;
 
+        // Hauteur du noeud AU-DESSUS DU RELIEF. C'est le chiffre qui a un sens quand on regle un
+        // ouvrage : la hauteur absolue, elle, bouge des qu'on regraine le bruit.
+        public float NodeLift(int i)
+        {
+            var t = Terrain();
+            Vector3 w = NodeWorld(i);
+            return t != null ? w.y - t.Height(w.x, w.z) : w.y - transform.position.y - groundHeight;
+        }
+
+        public void SetNodeLift(int i, float lift)
+        {
+            Vector3 w = NodeWorld(i);
+            SetNodeWorld(i, new Vector3(w.x, w.y + (lift - NodeLift(i)), w.z));
+        }
+
         public int NodeDegree(int i)
         {
             EnsureAdjacency();

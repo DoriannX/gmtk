@@ -254,6 +254,20 @@ namespace Gameplay.EditorTools
                                              liveReach2, out ignored);
                 }
 
+            // Les jupes suivent le sommet de grille dont elles pendent -- sinon le trait de
+            // pinceau souleve le sol et laisse la paroi en arriere, ce qui ROUVRE le trou qu'elle
+            // est justement la pour boucher.
+            for (int n = 0; n < skirtKey.Count; n++)
+            {
+                int key = skirtKey[n];
+                int i = key % (gridCx + 1), j = key / (gridCx + 1);
+                if (i < i0 || i > i1 || j < j0 || j > j1) continue;
+                int vi = gridIndex[key];
+                if (vi < 0 || vi >= liveVerts.Length) continue;
+                liveVerts[skirtTop[n]].y = liveVerts[vi].y;
+                liveVerts[skirtBottom[n]].y = liveVerts[vi].y - SkirtDrop;
+            }
+
             liveMesh.SetVertices(liveVerts);
             // Sans les normales, une butte fraiche s'eclaire comme un plan : on ne voit RIEN de
             // ce qu'on sculpte, ce qui etait tout le probleme.
@@ -350,13 +364,37 @@ namespace Gameplay.EditorTools
                     height[k] = Sample(nets, terrain, y, p, chords, reach2, out free[k]);
                 }
 
+            var kept = new bool[cx * cz];
             for (int j = 0; j < cz; j++)
                 for (int i = 0; i < cx; i++)
                 {
                     int a = j * (cx + 1) + i, b = a + 1;
                     int c = (j + 1) * (cx + 1) + i, d = c + 1;
                     if (!free[a] || !free[b] || !free[c] || !free[d]) continue;
+                    kept[j * cx + i] = true;
                     Quad(verts, tris, index, cx, nx0, nz0, height, i, j);
+                }
+
+            // --- jupe sur le pourtour des trous ---
+            // Le sol est une nappe d'epaisseur nulle : la ou la grille s'arrete pour laisser
+            // passer une route, son bord est une ARETE NUE, et tout ce qui la regarde d'en
+            // dessous ou de cote voit le vide au travers. Mesure sous le pont de test (x = 40) :
+            // le sol manque de z = -46 a z = -29, la ou la route repasse sous les 4 m, et
+            // 71 rayons sur 1008 tires vers le BAS depuis dessous le tablier partaient a
+            // l'infini. Meme cause pour l'anneau ouvert autour d'un egout.
+            //
+            // Une paroi verticale par arete de bord suffit : elle ne se voit que depuis
+            // l'interieur du trou, qui est ferme par la tuile au-dessus. Rien n'est emis sur le
+            // bord EXTERIEUR de la grille fine -- l'anneau plat s'y raccorde deja.
+            skirtTop.Clear(); skirtBottom.Clear(); skirtKey.Clear();
+            for (int j = 0; j < cz; j++)
+                for (int i = 0; i < cx; i++)
+                {
+                    if (!kept[j * cx + i]) continue;
+                    Skirt(verts, tris, kept, height, cx, cz, nx0, nz0, i, j, 1, 0);
+                    Skirt(verts, tris, kept, height, cx, cz, nx0, nz0, i, j, -1, 0);
+                    Skirt(verts, tris, kept, height, cx, cz, nx0, nz0, i, j, 0, 1);
+                    Skirt(verts, tris, kept, height, cx, cz, nx0, nz0, i, j, 0, -1);
                 }
 
             // --- anneau exterieur : 8 grands quads autour de la grille fine ---
@@ -392,6 +430,57 @@ namespace Gameplay.EditorTools
             int d = Vertex(verts, index, cx, x0, z0, height, i + 1, j + 1);
             tris.Add(a); tris.Add(c); tris.Add(b);
             tris.Add(b); tris.Add(c); tris.Add(d);
+        }
+
+        // Hauteur de la jupe. Genereuse a dessein : ce n'est PAS une boite, juste un rideau, donc
+        // un regard assez plongeant finit toujours par passer sous son bord. Mesure depuis
+        // dessous le pont de test, a 40 deg vers le bas : a 12 m de retombee il restait 10 rayons
+        // sur 1008 qui filaient dessous, a 20 m de profondeur et 20 m de la. La retombee ne coute
+        // rien -- meme nombre de triangles, seulement plus hauts -- donc on la prend large.
+        const float SkirtDrop = 60f;
+
+        // Sommets de jupe, retenus pour la mise a jour vivante du pinceau : ils ne sont pas dans
+        // `gridIndex` et resteraient donc en arriere pendant un trait, ouvrant une fente le long
+        // de chaque route sculptee.
+        static readonly List<int> skirtTop = new List<int>();
+        static readonly List<int> skirtBottom = new List<int>();
+        static readonly List<int> skirtKey = new List<int>();
+
+        // Paroi verticale le long de l'arete que la cellule (i, j) partage avec sa voisine dans
+        // la direction (di, dj), quand cette voisine est un trou.
+        static void Skirt(List<Vector3> verts, List<int> tris, bool[] kept, float[] height,
+                          int cx, int cz, float x0, float z0, int i, int j, int di, int dj)
+        {
+            int ni = i + di, nj = j + dj;
+            if (ni < 0 || ni >= cx || nj < 0 || nj >= cz) return;
+            if (kept[nj * cx + ni]) return;
+
+            // L'arete est parcourue dans le sens e = (-dj, 0, di) : c'est le seul qui donne
+            // cross(e, bas) = (di, 0, dj), soit une face tournee VERS le trou. Les quatre cas
+            // sont ecrits en clair, une formule generique se relit moins bien qu'eux.
+            int ka, kb;
+            if (di > 0) { ka = j * (cx + 1) + i + 1; kb = (j + 1) * (cx + 1) + i + 1; }
+            else if (di < 0) { ka = (j + 1) * (cx + 1) + i; kb = j * (cx + 1) + i; }
+            else if (dj > 0) { ka = (j + 1) * (cx + 1) + i + 1; kb = (j + 1) * (cx + 1) + i; }
+            else { ka = j * (cx + 1) + i; kb = j * (cx + 1) + i + 1; }
+
+            int t0 = verts.Count;
+            verts.Add(Corner(cx, x0, z0, height, ka));
+            verts.Add(Corner(cx, x0, z0, height, kb));
+            verts.Add(verts[t0] + Vector3.down * SkirtDrop);
+            verts.Add(verts[t0 + 1] + Vector3.down * SkirtDrop);
+
+            tris.Add(t0); tris.Add(t0 + 1); tris.Add(t0 + 2);
+            tris.Add(t0 + 1); tris.Add(t0 + 3); tris.Add(t0 + 2);
+
+            skirtTop.Add(t0); skirtBottom.Add(t0 + 2); skirtKey.Add(ka);
+            skirtTop.Add(t0 + 1); skirtBottom.Add(t0 + 3); skirtKey.Add(kb);
+        }
+
+        static Vector3 Corner(int cx, float x0, float z0, float[] height, int key)
+        {
+            int i = key % (cx + 1), j = key / (cx + 1);
+            return new Vector3(x0 + i * Cell, height[key], z0 + j * Cell);
         }
 
         static int Vertex(List<Vector3> verts, int[] index, int cx,
@@ -457,12 +546,15 @@ namespace Gameplay.EditorTools
             // passerait pour une route au ras du sol.
             var q = new Vector3(p.x, y, p.z);
             float best = float.PositiveInfinity, roadY = y;
+            var bestKind = RoadNetwork.SegmentKind.Route;
             foreach (var net in nets)
             {
                 RoadNetwork.RoadProbe probe;
                 if (!net.ProbeRoad(q, ProbeRange, out probe, OverheadIgnore)) continue;
                 if (probe.clearance >= best) continue;
                 best = probe.clearance;
+                // Un croisement est toujours routier : il n'existe que sur des routes.
+                bestKind = probe.node >= 0 ? RoadNetwork.SegmentKind.Route : probe.kind;
                 // Un croisement est couche dans la pente : sa surface a l'aplomb du point n'est
                 // PAS la hauteur de son centre. Au pied d'une rampe, l'ecart atteignait un metre
                 // et le sol enterrait la route.
@@ -478,12 +570,21 @@ namespace Gameplay.EditorTools
             free = best >= -Overlap;
             if (float.IsPositiveInfinity(best)) return y;
 
-            // Le sol vise un poil SOUS le trottoir, et plonge d'autant plus qu'il s'enfonce sous
-            // l'emprise. Cale a la meme hauteur, il se battait avec le trottoir dans le tampon de
-            // profondeur : deux surfaces distantes de 2 cm sur 3,3 m de recouvrement, ca ressort
-            // en pointilles le long de chaque route. La plongee reste sous l'epaisseur de la
-            // tuile, donc invisible.
-            roadY -= RoadSink + Mathf.Max(0f, -best) * UnderSlope;
+            // Le sol vise un poil SOUS le trottoir. Cale a la meme hauteur, il se battait avec le
+            // trottoir dans le tampon de profondeur : deux surfaces distantes de 2 cm sur 3,3 m
+            // de recouvrement, ca ressort en pointilles le long de chaque route.
+            //
+            // La PLONGEE progressive sous l'emprise, elle, n'est bonne que pour une ROUTE : elle
+            // atteint 0,55 m au plus profond du recouvrement, ce qui reste sous les 63 cm
+            // d'epaisseur de la tuile, donc invisible. Un escalier ou un egout n'ont pas cette
+            // epaisseur -- la levre d'un canal est une feuille -- et la plongee y ressortait a nu.
+            // Comme la grille ne garde une cellule que si ses QUATRE coins sont hors emprise, le
+            // bord du sol est un escalier de cellules : chaque marche qui s'approchait de la
+            // margelle montrait sa demi-cellule 55 cm plus bas, d'ou la rangee de DENTS DE SCIE
+            // tout le long de la tranchee, chacune avec sa fente.
+            roadY -= RoadSink;
+            if (bestKind == RoadNetwork.SegmentKind.Route)
+                roadY -= Mathf.Max(0f, -best) * UnderSlope;
 
             // Le sol reste cale sur la route jusqu'a `Shoulder` metres AU-DELA du bord de
             // l'emprise. Sans cet accotement, la remontee vers le terrain commence pile au bord

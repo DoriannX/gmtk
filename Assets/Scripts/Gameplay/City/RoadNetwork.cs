@@ -122,8 +122,9 @@ namespace Gameplay.City
         [Tooltip("Largeur de la volee, en metres.")]
         [SerializeField] private float stairWidth = 6f;
         [Tooltip("Hauteur d'une marche, en metres. Le nombre de marches en decoule : c'est le " +
-                 "denivele entre les deux bouts divise par cette valeur.")]
-        [SerializeField] private float stairRiser = 0.35f;
+                 "denivele entre les deux bouts divise par cette valeur. Elle regle AUSSI le " +
+                 "giron : la volee suit la pente du trace, donc giron = hauteur / pente.")]
+        [SerializeField] private float stairRiser = 0.18f;
         [Tooltip("Descente des joues sous le bout le plus bas, en metres. Elles cachent le " +
                  "raccord avec le sol ; trop court, on voit le terrain entre deux marches.")]
         [SerializeField] private float stairSkirt = 1.5f;
@@ -464,7 +465,12 @@ namespace Gameplay.City
         // Par raycast et non par calcul : il faut interroger TOUTES les routes a cet endroit, pas
         // la plus proche, et la geometrie deja posee sait repondre. Les marges evitent d'attraper
         // le tablier qu'on porte et le sol sur lequel on pose.
-        private bool Obstructed(Vector3 world, float top, float ground, float halfSide)
+        // `ignore` : le trace sur lequel la pile POSE son pied. Un egout franchi par le pont
+        // traverse forcement toute la hauteur de la pile -- sa levre est au niveau du terrain --
+        // et sans cette exception il se ferait prendre pour une route en travers, ce qui
+        // supprimait purement et simplement la pile.
+        private bool Obstructed(Vector3 world, float top, float ground, float halfSide,
+                                Transform ignore = null)
         {
             const float Margin = 0.25f;
             float from = top - Margin, to = ground + Margin;
@@ -480,7 +486,11 @@ namespace Gameplay.City
                                               Vector3.down, from - to, ~0,
                                               QueryTriggerInteraction.Ignore);
                 foreach (var hit in hits)
-                    if (hit.collider.transform.IsChildOf(transform)) return true;
+                {
+                    Transform h = hit.collider.transform;
+                    if (ignore != null && h.IsChildOf(ignore)) continue;
+                    if (h.IsChildOf(transform)) return true;
+                }
             }
             return false;
         }
@@ -511,7 +521,9 @@ namespace Gameplay.City
                 if (pierEvery < 1f || NodeLift(i) <= CapAbove) continue;
 
                 Vector3 w = NodeWorld(i);
-                float ground = GroundUnder(w);
+                int under;
+                float ground = SupportUnder(w, out under);
+                Transform footOn = under >= 0 ? root.Find("Seg_" + under) : null;
                 // Section bornee : plus la pile est large, plus le point bas de son emprise
                 // s'eloigne sous un carrefour en pente, et plus le jour se creuse.
                 float side = Mathf.Clamp(JunctionRadius(i) * 0.4f, pierSize, MaxJunctionPier);
@@ -533,7 +545,7 @@ namespace Gameplay.City
                 float top = surf - SidewalkHeight - PierBite;
                 float h = top - ground;
                 if (h < 1f) continue;
-                if (Obstructed(w, top, ground, halfSide)) continue;
+                if (Obstructed(w, top, ground, halfSide, footOn)) continue;
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 pier.name = JunctionPier + i;
                 pier.hideFlags = GenFlags;
@@ -2027,6 +2039,57 @@ namespace Gameplay.City
             return t != null ? t.Height(world.x, world.z) : transform.position.y + groundHeight;
         }
 
+        // Sol PORTEUR sous un point : ce sur quoi une pile doit poser son pied.
+        //
+        // Ce n'est pas le relief. Un egout ou un escalier CREUSE sous lui, et le relief ne le sait
+        // pas : une pile de pont franchissant un canal s'arretait donc au niveau du terrain et
+        // restait suspendue au-dessus du fond, 4 m plus haut.
+        //
+        // `under` rend le segment sur lequel on a atterri, ou -1. L'appelant en a besoin : ce
+        // trace-la traverse forcement la hauteur de la pile, et le controle d'obstruction le
+        // prendrait pour une route en travers du chemin.
+        private float SupportUnder(Vector3 world, out int under)
+        {
+            under = -1;
+            float y = GroundUnder(world);
+
+            // Sonde faite DEPUIS LE RELIEF et bornee juste au-dessus : sans ca le premier trace
+            // trouve serait le tablier qu'on est en train d'etayer, et la pile poserait son pied
+            // sur son propre pont.
+            RoadProbe probe;
+            if (!ProbeRoad(new Vector3(world.x, y, world.z), 0.5f, out probe, PierProbeAbove))
+                return y;
+            if (probe.segment < 0) return y;
+
+            float surf;
+            switch (segments[probe.segment].kind)
+            {
+                case SegmentKind.Egout: surf = probe.point.y + EgoutRise(probe.distance); break;
+                case SegmentKind.Escalier: surf = probe.point.y; break;
+                // Une route ne creuse pas : le sol monte la chercher, donc le relief fait foi.
+                default: return y;
+            }
+
+            if (surf >= y) return y;
+            under = probe.segment;
+            return surf;
+        }
+
+        private const float PierProbeAbove = 0.5f;
+
+        // Hauteur de la surface du canal au-dessus de son fond, a une distance laterale donnee.
+        // Reprend a l'identique le profil de RoadMeshWarp.ChannelSection : quart d'ellipse
+        // x = hw + wall*sin(a), y = depth*(1 - cos(a)). Une pile plantee au milieu du canal pose
+        // donc sur le fond, une pile plantee sur la levre reste au niveau du terrain.
+        private float EgoutRise(float d)
+        {
+            float hw = Mathf.Max(0.5f, egoutHalfWidth), w = Mathf.Max(0.1f, egoutWall);
+            if (d <= hw) return 0f;
+            if (d >= hw + w) return EgoutDepth;
+            float sa = (d - hw) / w;
+            return EgoutDepth * (1f - Mathf.Sqrt(Mathf.Max(0f, 1f - sa * sa)));
+        }
+
         private void BuildPiers(Transform seg, Spline spline, RoadMeshWarp.Deck deck)
         {
             for (int i = seg.childCount - 1; i >= 0; i--)
@@ -2047,7 +2110,9 @@ namespace Gameplay.City
                 float t = (float)i / (count + 1);
                 Vector3 local = SplinePoint(spline, t);
                 Vector3 world = transform.TransformPoint(local);
-                float ground = GroundUnder(world);
+                int under;
+                float ground = SupportUnder(world, out under);
+                Transform footOn = under >= 0 && seg.parent != null ? seg.parent.Find("Seg_" + under) : null;
 
                 // Le tablier est en PENTE : sa surface a l'aplomb du bord aval de la pile est plus
                 // basse qu'a son axe. On vise donc le point le plus BAS de l'emprise, ce qui
@@ -2067,7 +2132,7 @@ namespace Gameplay.City
                 // Sous cette hauteur la pile serait un caillou coince entre le sol et le tablier :
                 // c'est le cas des abords d'ouvrage, ou le remblai monte deja chercher la route.
                 if (h < 1f) continue;
-                if (Obstructed(world, top, ground, halfSide)) continue;
+                if (Obstructed(world, top, ground, halfSide, footOn)) continue;
 
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 pier.name = PierName + i;

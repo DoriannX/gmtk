@@ -606,10 +606,20 @@ namespace Gameplay.City
             // Le tablier de bouche vaut au moins la diagonale d'une cellule de sol (2 m -> 2,83),
             // sinon le recul de la grille le deborde et le trou revient.
             return Sweep(reuse, UprightStations(spline, len, k), sec, len, capStart, capEnd,
-                         Mathf.Max(3.2f, lip));
+                         Mathf.Max(3.2f, lip), 1);
         }
 
         const int WallSegments = 8;   // facettes par paroi du U -- 8 suffit a ne plus se voir
+        // RETOMBEE sous le bord exterieur de la levre. Sans elle le canal est une FEUILLE : la
+        // levre regarde vers le haut, donc on la traverse par en dessous, et le sol s'arrete plus
+        // tot qu'elle (sa grille ne garde une cellule que si ses quatre coins sont hors emprise --
+        // mesure sur seg14 : levre de 9 a 12,5 m de l'axe, sol a partir de 10,75 seulement, et
+        // 30 cm plus bas). Il restait donc un anneau ouvert sur tout le pourtour, par lequel un
+        // regard rasant depuis le canal sortait droit sur le ciel.
+        //
+        // 2 m suffisent : la retombee part du bord exterieur de la levre, la ou le sol la recouvre
+        // deja -- elle est enterree, on ne la voit jamais, elle ne fait que boucher.
+        const float ChannelSkirt = 2f;
 
         // Reperes references sur la VERTICALE DU MONDE, et non transportes le long de la courbe.
         //
@@ -651,12 +661,18 @@ namespace Gameplay.City
         }
 
         // Section transversale du canal, en (lateral, hauteur), fond a y = 0. Parcourue de la
-        // levre gauche a la levre droite : le fond est la corde entre les deux bas de paroi, un
-        // seul quad, il est plat.
+        // retombee gauche a la retombee droite : le fond est la corde entre les deux bas de
+        // paroi, un seul quad, il est plat.
+        //
+        // Les deux points de RETOMBEE (premier et dernier) sont a part : ils n'ajoutent aucune
+        // aire a la section -- ils la prolongent vers le bas, a la verticale -- donc les murs de
+        // bouche les IGNORENT (voir le parametre `trim` de Sweep). Les inclure ferait passer
+        // l'eventail de Cap sous le fond du canal et retournerait la moitie de ses triangles.
         private static Vector2[] ChannelSection(float halfWidth, float depth, float wall,
                                                 float lip, int seg)
         {
-            var pts = new List<Vector2>(seg * 2 + 4);
+            var pts = new List<Vector2>(seg * 2 + 6);
+            pts.Add(new Vector2(-(halfWidth + wall + lip), depth - ChannelSkirt));
             pts.Add(new Vector2(-(halfWidth + wall + lip), depth));
             for (int i = seg; i >= 0; i--)
             {
@@ -669,17 +685,22 @@ namespace Gameplay.City
                 pts.Add(new Vector2(halfWidth + wall * Mathf.Sin(a), depth * (1f - Mathf.Cos(a))));
             }
             pts.Add(new Vector2(halfWidth + wall + lip, depth));
+            pts.Add(new Vector2(halfWidth + wall + lip, depth - ChannelSkirt));
             return pts.ToArray();
         }
 
         // Balayage d'une section transversale le long des reperes. Les sommets sont PARTAGES
         // entre stations et entre points de section : RecalculateNormals lisse alors la courbe
         // du U au lieu de la facetter, ce qui est tout l'interet d'avoir mis 8 facettes dedans.
+        // `trim` : nombre de points a ignorer a CHAQUE bout de la section quand on ferme une
+        // bouche. Le ruban balaye, lui, toute la section.
         private static Mesh Sweep(Mesh reuse, Frame[] st, Vector2[] sec, float len,
-                                  bool capStart, bool capEnd, float apron)
+                                  bool capStart, bool capEnd, float apron, int trim)
         {
             int ns = st.Length, np = sec.Length;
             if (ns < 2 || np < 2) return null;
+            int lo = Mathf.Clamp(trim, 0, np / 2 - 1), hi = np - 1 - lo;
+            int cw = hi - lo + 1;
 
             // Les murs de fond ont leurs PROPRES sommets et ne reprennent pas ceux de la station
             // du bout : partages, RecalculateNormals moyennerait la normale du mur avec celle du
@@ -690,8 +711,12 @@ namespace Gameplay.City
             // jusqu'a 2,8 m au-dela du plan de bouche pendant que le canal, lui, s'y arrete net.
             // L'anneau entre les deux etait un trou beant. Meme parade que sur les cotes, ou
             // c'est la levre des parois qui recoit le recouvrement.
-            int capV = (capStart ? np + 4 : 0) + (capEnd ? np + 4 : 0);
-            int capT = ((capStart ? 1 : 0) + (capEnd ? 1 : 0)) * ((np - 2) + 2) * 3;
+            // cw sommets de section + 4 pour le tablier + 4 pour sa retombee.
+            int capV = (capStart ? cw + 8 : 0) + (capEnd ? cw + 8 : 0);
+            // Majorant : (cw - 2) triangles de mur, 2 de tablier, 6 de retombee. Les bandes
+            // d'aire nulle sont sautees, donc le compte reel est plus petit -- le tableau est
+            // retaille a la fin plutot que de laisser trainer des triangles degeneres.
+            int capT = ((capStart ? 1 : 0) + (capEnd ? 1 : 0)) * (cw + 6) * 3;
 
             var v = new Vector3[ns * np + capV];
             var uv = new Vector2[ns * np + capV];
@@ -725,8 +750,9 @@ namespace Gameplay.City
                 }
 
             int baseV = ns * np;
-            if (capStart) baseV = Cap(v, uv, tris, ref t, baseV, st[0], sec, s, apron, false);
-            if (capEnd) Cap(v, uv, tris, ref t, baseV, st[ns - 1], sec, s, apron, true);
+            if (capStart) baseV = Cap(v, uv, tris, ref t, baseV, st[0], sec, s, apron, false, lo, hi);
+            if (capEnd) Cap(v, uv, tris, ref t, baseV, st[ns - 1], sec, s, apron, true, lo, hi);
+            if (t < tris.Length) System.Array.Resize(ref tris, t);
 
             return Commit(reuse, v, uv, tris);
         }
@@ -735,49 +761,83 @@ namespace Gameplay.City
         // U sous une droite), donc un simple eventail suffit a la remplir -- pas besoin d'une
         // triangulation de polygone.
         private static int Cap(Vector3[] v, Vector2[] uv, int[] tris, ref int t, int baseV,
-                               in Frame f, Vector2[] sec, float[] s, float apron, bool forward)
+                               in Frame f, Vector2[] sec, float[] s, float apron, bool forward,
+                               int from, int to)
         {
-            int np = sec.Length;
+            int np = to - from + 1;
             for (int i = 0; i < np; i++)
             {
-                v[baseV + i] = f.pos + f.right * sec[i].x + f.up * sec[i].y;
-                uv[baseV + i] = new Vector2(s[i], sec[i].y) * 0.1f;
+                Vector2 c = sec[from + i];
+                v[baseV + i] = f.pos + f.right * c.x + f.up * c.y;
+                uv[baseV + i] = new Vector2(s[from + i], c.y) * 0.1f;
             }
-            // right = cross(up, fwd) donne cross(right, up) = fwd : parcourue de gauche a droite,
-            // la section rend un eventail tourne vers +fwd. Le mur du DEPART regarde en sens
-            // inverse, on inverse donc son ordre.
-            for (int i = 1; i + 1 < np; i++)
+            // Remplissage en BANDES entre points MIROIR, pas en eventail depuis un coin.
+            //
+            // La section est symetrique : le point i a gauche et le point np-1-i a droite sont a
+            // la meme hauteur. Les relier donne des trapezes larges qui suivent le profil du U.
+            // L'eventail, lui, faisait converger dix-huit fuseaux sur la levre gauche, et le
+            // rendu cartoon souligne chaque arete : la bouche se lisait en ZIGZAG, avec des
+            // triangles d'autant plus effiles qu'on s'eloignait de l'apex.
+            //
+            // Parcourue l0 -> l1 -> r1 -> r0, la bande tourne dans le sens direct du repere
+            // (right, up), donc sa normale vaut cross(right, up) = +fwd.
+            //
+            // Le mur regarde VERS LE CANAL, donc a l'oppose de `forward` -- d'ou le !forward.
+            // C'est le seul cote qu'on puisse voir : l'autre est enterre dans le terrain. Oriente
+            // vers le terrain (ce qu'il faisait), le mur est invisible depuis la tranchee et on
+            // regarde droit au travers -- mesure sur les quatre bouches de la ville, la normale
+            // moyenne pointait a -1.00 vers l'interieur, soit exactement a l'envers.
+            for (int i = 0; i + 1 < np - 2 - i; i++)
             {
-                if (forward) { tris[t++] = baseV; tris[t++] = baseV + i; tris[t++] = baseV + i + 1; }
-                else { tris[t++] = baseV; tris[t++] = baseV + i + 1; tris[t++] = baseV + i; }
+                // Bande d'aire nulle : les deux points de levre sont a plat sous la corde haute,
+                // les quatre coins sont alors alignes. PhysX n'a rien a faire d'un triangle
+                // degenere, et le compte de triangles a ete majore pour permettre ce saut.
+                if (Mathf.Abs(sec[from + i].y - sec[from + i + 1].y) < 1e-4f) continue;
+
+                int l0 = baseV + i, l1 = baseV + i + 1;
+                int r1 = baseV + np - 2 - i, r0 = baseV + np - 1 - i;
+                Emit(tris, ref t, !forward, l0, l1, r1);
+                Emit(tris, ref t, !forward, l0, r1, r0);
             }
 
             // Tablier : rectangle plat au niveau de la levre, pose EN DEHORS de la bouche. Son
             // bord interieur epouse le haut du mur de fond, donc l'ensemble reste etanche.
+            //
+            // Il porte sa propre RETOMBEE sur ses trois bords libres, pour la meme raison que la
+            // levre du canal : le sol autour arrive 7 cm plus bas (mesure a la bouche du noeud
+            // 22), et une dalle a bord vif laisse donc une fente sur tout son pourtour -- le
+            // petit trou qu'on voit en s'accroupissant a cote de la bouche.
             int a = baseV + np;
             Vector3 outward = f.fwd * (forward ? apron : -apron);
-            float lo = sec[0].x, hi = sec[np - 1].x, y = sec[0].y;
+            Vector3 drop = Vector3.down * ChannelSkirt;
+            float lo = sec[from].x, hi = sec[to].x, y = sec[from].y;
             Vector3 inL = f.pos + f.right * lo + f.up * y;
             Vector3 inR = f.pos + f.right * hi + f.up * y;
             v[a + 0] = inL; v[a + 1] = inL + outward;
             v[a + 2] = inR; v[a + 3] = inR + outward;
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 4; i++) v[a + 4 + i] = v[a + i] + drop;
+            for (int i = 0; i < 8; i++)
                 uv[a + i] = new Vector2(v[a + i].x, v[a + i].z) * 0.1f;
 
-            // Meme regle de bobinage que le ruban principal : (interieur, exterieur, interieur+1)
-            // regarde vers le haut quand on avance vers l'exterieur. Au depart, l'exterieur est
-            // a -fwd, donc l'ordre s'inverse.
-            if (forward)
-            {
-                tris[t++] = a + 0; tris[t++] = a + 1; tris[t++] = a + 2;
-                tris[t++] = a + 2; tris[t++] = a + 1; tris[t++] = a + 3;
-            }
-            else
-            {
-                tris[t++] = a + 0; tris[t++] = a + 2; tris[t++] = a + 1;
-                tris[t++] = a + 1; tris[t++] = a + 2; tris[t++] = a + 3;
-            }
-            return a + 4;
+            // Dessus, puis les trois cotes de la retombee : gauche, exterieur, droit.
+            Emit(tris, ref t, forward, a + 0, a + 1, a + 2);
+            Emit(tris, ref t, forward, a + 2, a + 1, a + 3);
+            Emit(tris, ref t, forward, a + 0, a + 4, a + 1);
+            Emit(tris, ref t, forward, a + 1, a + 4, a + 5);
+            Emit(tris, ref t, forward, a + 1, a + 5, a + 3);
+            Emit(tris, ref t, forward, a + 3, a + 5, a + 7);
+            Emit(tris, ref t, forward, a + 2, a + 3, a + 6);
+            Emit(tris, ref t, forward, a + 3, a + 7, a + 6);
+            return a + 8;
+        }
+
+        // Un triangle, dans l'ordre donne pour le mur d'ARRIVEE et inverse pour celui du depart :
+        // les deux bouchons sont geometriquement identiques et se regardent dos a dos.
+        private static void Emit(int[] tris, ref int t, bool forward, int a, int b, int c)
+        {
+            tris[t++] = a;
+            tris[t++] = forward ? b : c;
+            tris[t++] = forward ? c : b;
         }
 
         // ESCALIER : volee a marches EGALES entre les deux bouts de la spline.
@@ -810,7 +870,12 @@ namespace Gameplay.City
             // Bande morte a 0,75 contremarche avant de changer de niveau : sans elle, une volee
             // presque plate dont la spline ondule autour d'une frontiere de quantification
             // monterait et descendrait d'une marche en permanence.
-            int fine = Mathf.Clamp(Mathf.CeilToInt(len / 0.25f), 8, 4096);
+            // Pas d'echantillonnage nettement plus court que le giron le plus serre qu'on
+            // fabrique : le profil ne peut changer de niveau qu'aux abscisses testees, donc un
+            // pas plus long que le giron fusionnerait des marches deux a deux. A 0,18 m de
+            // contremarche sur la volee la plus raide de la ville (pente 0,64), le giron tombe a
+            // 0,28 m -- l'ancien pas de 0,25 passait tout juste, celui-ci garde de la marge.
+            int fine = Mathf.Clamp(Mathf.CeilToInt(len / 0.1f), 8, 8192);
             var pd = new List<float>();
             var py = new List<float>();
             float level = Quant(SampleY(spline, 0f, len), y0, riser);
@@ -871,10 +936,20 @@ namespace Gameplay.City
                 tris.Add(a + 0); tris.Add(b + 0); tris.Add(a + 1);
                 tris.Add(a + 1); tris.Add(b + 0); tris.Add(b + 1);
 
+                // DESSOUS. Sans lui la volee est une coque ouverte : vue d'en dessous -- depuis un
+                // egout qui passe sous elle, depuis le bas d'un talus -- on traverse les marches
+                // et on voit le ciel au travers. Il suit le meme profil en escalier que les pieds
+                // de joue, donc les quads de contremarche existent aussi ici et il n'y a rien a
+                // sauter : c'est ce qui rend le volume etanche.
+                tris.Add(a + 2); tris.Add(a + 3); tris.Add(b + 2);
+                tris.Add(a + 3); tris.Add(b + 3); tris.Add(b + 2);
+
                 // Les joues, elles, SAUTENT les contremarches : deux points de profil au meme
                 // endroit en plan y donnent un quad d'aire nulle. Invisible au rendu, mais c'est
                 // la moitie des triangles de la joue qui partaient dans le MeshCollider, et
-                // PhysX n'a rien a faire de triangles degeneres.
+                // PhysX n'a rien a faire de triangles degeneres. Le volume ne fuit pas pour
+                // autant : les deux tranches de joue voisines se CHEVAUCHENT en hauteur des que
+                // la descente de joue depasse une contremarche, ce qui est le cas par contrat.
                 float dxz = new Vector2(pos[p + 1].x - pos[p].x, pos[p + 1].z - pos[p].z).magnitude;
                 if (dxz < 1e-4f) continue;
 
@@ -885,6 +960,16 @@ namespace Gameplay.City
                 tris.Add(a + 0); tris.Add(a + 2); tris.Add(b + 0);
                 tris.Add(b + 0); tris.Add(a + 2); tris.Add(b + 2);
             }
+
+            // Bouchons de bout. Les deux extremites d'une volee sont en general enterrees, mais
+            // "en general" ne suffit pas : le haut d'un escalier qui debouche sur un pont, ou le
+            // bas d'un escalier qui plonge dans un egout, laisse la tranche a l'air libre.
+            // 0/1/2/3 = dessus gauche, dessus droit, pied gauche, pied droit.
+            int e = (np - 1) * 4;
+            tris.Add(3); tris.Add(2); tris.Add(1);            // depart -> regarde vers -fwd
+            tris.Add(1); tris.Add(2); tris.Add(0);
+            tris.Add(e + 2); tris.Add(e + 3); tris.Add(e + 0);   // arrivee -> regarde vers +fwd
+            tris.Add(e + 0); tris.Add(e + 3); tris.Add(e + 1);
 
             int[] tri = tris.ToArray();
             Unweld(ref v, ref uv, ref tri);

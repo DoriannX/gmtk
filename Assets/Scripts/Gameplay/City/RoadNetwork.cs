@@ -27,6 +27,10 @@ namespace Gameplay.City
             public Vector3 pos;          // LOCAL au RoadNetwork -> deplacer le GO deplace la route
             public bool roundabout;      // variante rond-point du carrefour, valable a 4 branches
             public float yaw;            // rotation MANUELLE ajoutee au yaw calcule (deg)
+            // Hauteur VOULUE au-dessus du relief (0 = rue posee au sol, 7 = tablier de pont).
+            // `pos.y` reste la hauteur absolue et fait foi partout ailleurs : c'est LayOnTerrain
+            // qui recalcule l'une depuis l'autre quand le relief change.
+            public float lift;
         }
 
         [System.Serializable]
@@ -77,6 +81,10 @@ namespace Gameplay.City
         // --- graphe (seule donnee serialisee) ---
         [SerializeField, HideInInspector] private List<Node> nodes = new List<Node>();
         [SerializeField, HideInInspector] private List<Segment> segments = new List<Segment>();
+        // Faux tant que les hauteurs des noeuds sont des valeurs saisies a la main sur un sol
+        // plat. Voir LayOnTerrain : c'est ce drapeau qui distingue la premiere pose (capture des
+        // hauteurs d'ouvrage) des suivantes (le relief commande).
+        [SerializeField, HideInInspector] private bool liftCaptured;
 
         private const string ContainerName = "Generated";
         private const string CapName = "Dessous";
@@ -175,12 +183,53 @@ namespace Gameplay.City
             return nodes.Count - 1;
         }
 
+        // Repose tous les noeuds sur le relief, en conservant la hauteur d'ouvrage de chacun.
+        //
+        // `lift` n'existe pas tant qu'on n'a pas de relief : la premiere pose le CAPTURE depuis
+        // les hauteurs deja saisies a la main (terrain plat -> lift = pos.y, un pont a +7 reste a
+        // +7 au-dessus de la butte). Ensuite c'est lui qui commande, et regrainer le bruit ne
+        // fait plus deriver les ouvrages.
+        // Relief de la scene, cherche une fois. Le drag appelle SetNodeWorld a chaque frame : une
+        // recherche par type a chaque appel serait payee pour rien.
+        [System.NonSerialized] private CityTerrain terrainCache;
+        private CityTerrain Terrain()
+        {
+            if (terrainCache == null) terrainCache = CityTerrain.Find();
+            return terrainCache;
+        }
+
+        public bool LayOnTerrain(CityTerrain terrain)
+        {
+            if (terrain == null) return false;
+            float baseY = terrain.transform.position.y;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                var n = nodes[i];
+                Vector3 w = transform.TransformPoint(n.pos);
+                if (!liftCaptured) n.lift = w.y - baseY;
+                w.y = terrain.Height(w.x, w.z) + n.lift;
+                n.pos = transform.InverseTransformPoint(w);
+            }
+            liftCaptured = true;
+            FullRebuild();
+            return true;
+        }
+
         // Deplacement : on ne reconstruit que le 2-ANNEAU. Bouger i change les directions de
         // branches de i ET de chaque voisin j, donc le yaw ajuste de j, donc TOUS les bras de j
         // -> un 1-anneau laisserait des trous aux croisements voisins pendant le drag.
         public void SetNodeWorld(int i, Vector3 world)
         {
             nodes[i].pos = transform.InverseTransformPoint(world);
+            // Toute saisie de hauteur passe par ici (champ de l'inspecteur, fleche de scene,
+            // drag) : c'est donc ICI qu'on rafraichit la hauteur au-dessus du relief, sinon la
+            // prochaine generation du sol reposerait le noeud sur une valeur perimee et
+            // annulerait l'edition.
+            if (liftCaptured)
+            {
+                var t = Terrain();
+                if (t != null) nodes[i].lift = world.y - t.Height(world.x, world.z);
+            }
             EnsureAdjacency();
             MarkDirty(i);
             foreach (int j in adj[i]) MarkDirty(j);

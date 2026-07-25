@@ -51,6 +51,13 @@ namespace Gameplay.EditorTools
         // La grille fine ne couvre que le voisinage des routes ; au-dela le sol est plat et
         // 8 grands quads suffisent. Evite 300 000 cellules pour du vide.
         const float NearMargin = 40f;
+        // Bande de raccord entre le terrain et la surface de la route, en metres. La route reste
+        // PLATE EN TRAVERS (le kit de tuiles n'a pas de sommets pour se coucher lateralement) :
+        // c'est le sol qui vient la chercher.
+        const float BlendBand = 8f;
+        // Pente maximale de ce raccord. Une route enfoncee de 6 m rattrapee sur 8 m ferait un mur
+        // a 37 deg ; la bande s'elargit donc avec le denivele pour que le talus reste roulable.
+        const float BlendSlope = 0.5f;
         // Le bord exterieur doit finir hors de vue : le brouillard ne le cache pas (sa couleur
         // est plus claire que le ciel juste au-dessus de l'horizon, l'arete se lit en vue
         // aerienne). Un quad de plus ne coute rien.
@@ -76,7 +83,17 @@ namespace Gameplay.EditorTools
             float groundY = 0f;
             foreach (var net in nets) groundY = Mathf.Max(groundY, net.transform.position.y + net.SidewalkHeight);
 
-            var mesh = BuildMesh(nets, all, roads, groundY);
+            // Les routes se posent sur le relief AVANT que le sol ne soit calcule : le sol se
+            // raccorde a leur surface, donc l'ordre inverse le ferait viser des hauteurs perimees.
+            var terrain = CityTerrain.Find();
+            foreach (var net in nets)
+            {
+                Undo.RecordObject(net, "Poser les routes sur le relief");
+                if (net.LayOnTerrain(terrain))
+                    EditorUtility.SetDirty(net);
+            }
+
+            var mesh = BuildMesh(nets, terrain, all, roads, groundY);
 
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
@@ -110,7 +127,8 @@ namespace Gameplay.EditorTools
 
         // ---------------------------------------------------------------- geometrie
 
-        static Mesh BuildMesh(RoadNetwork[] nets, Bounds all, Bounds roads, float y)
+        static Mesh BuildMesh(RoadNetwork[] nets, CityTerrain terrain, Bounds all, Bounds roads,
+                              float y)
         {
             // Emprise totale, et emprise de la grille fine (alignee sur le pas de grille pour
             // que l'anneau exterieur se raccorde pile sur le bord de la grille).
@@ -121,10 +139,23 @@ namespace Gameplay.EditorTools
             Grow(ref fx0, ref fx1, MinSize);
             Grow(ref fz0, ref fz1, MinSize);
 
-            float nx0 = Mathf.Floor((roads.min.x - NearMargin) / Cell) * Cell;
-            float nx1 = Mathf.Ceil((roads.max.x + NearMargin) / Cell) * Cell;
-            float nz0 = Mathf.Floor((roads.min.z - NearMargin) / Cell) * Cell;
-            float nz1 = Mathf.Ceil((roads.max.z + NearMargin) / Cell) * Cell;
+            // La grille fine doit couvrir tout le relief, sinon une bosse tomberait dans
+            // l'anneau exterieur -- qui est plat par construction (4 quads) et se fendrait au
+            // raccord. Le disque de CityTerrain est donc englobe, marge comprise.
+            Bounds fine = roads;
+            fine.Expand(new Vector3(NearMargin * 2f, 0f, NearMargin * 2f));
+            if (terrain != null)
+            {
+                Vector3 c = terrain.transform.position;
+                float r = terrain.radius;
+                fine.Encapsulate(new Vector3(c.x - r, 0f, c.z - r));
+                fine.Encapsulate(new Vector3(c.x + r, 0f, c.z + r));
+            }
+
+            float nx0 = Mathf.Floor(fine.min.x / Cell) * Cell;
+            float nx1 = Mathf.Ceil(fine.max.x / Cell) * Cell;
+            float nz0 = Mathf.Floor(fine.min.z / Cell) * Cell;
+            float nz1 = Mathf.Ceil(fine.max.z / Cell) * Cell;
             nx0 = Mathf.Max(nx0, fx0); nx1 = Mathf.Min(nx1, fx1);
             nz0 = Mathf.Max(nz0, fz0); nz1 = Mathf.Min(nz1, fz1);
 
@@ -140,12 +171,17 @@ namespace Gameplay.EditorTools
             var index = new int[(cx + 1) * (cz + 1)];
             for (int i = 0; i < index.Length; i++) index[i] = -1;
 
+            // Hauteur et garde routiere sont calculees dans la MEME passe : les deux sortent de
+            // la meme requete de proximite, et les recalculer separement doublerait le cout du
+            // poste le plus lourd de la generation.
             var free = new bool[(cx + 1) * (cz + 1)];
+            var height = new float[(cx + 1) * (cz + 1)];
             for (int j = 0; j <= cz; j++)
                 for (int i = 0; i <= cx; i++)
                 {
                     var p = new Vector3(nx0 + i * Cell, y, nz0 + j * Cell);
-                    free[j * (cx + 1) + i] = Clearance(nets, p) >= -Overlap;
+                    int k = j * (cx + 1) + i;
+                    height[k] = Sample(nets, terrain, y, p, out free[k]);
                 }
 
             for (int j = 0; j < cz; j++)
@@ -154,7 +190,7 @@ namespace Gameplay.EditorTools
                     int a = j * (cx + 1) + i, b = a + 1;
                     int c = (j + 1) * (cx + 1) + i, d = c + 1;
                     if (!free[a] || !free[b] || !free[c] || !free[d]) continue;
-                    Quad(verts, tris, index, cx, nx0, nz0, y, i, j);
+                    Quad(verts, tris, index, cx, nx0, nz0, height, i, j);
                 }
 
             // --- anneau exterieur : 8 grands quads autour de la grille fine ---
@@ -167,39 +203,39 @@ namespace Gameplay.EditorTools
             if (verts.Count > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.SetVertices(verts);
             mesh.SetTriangles(tris, 0);
+            // UV planaires : le sol n'a pas de depliage, et une projection sur XZ tient tant que
+            // les pentes restent celles d'une butte (l'etirement vaut 1/cos(pente)).
             var uv = new Vector2[verts.Count];
-            var nrm = new Vector3[verts.Count];
             for (int i = 0; i < verts.Count; i++)
-            {
                 uv[i] = new Vector2(verts[i].x, verts[i].z) * 0.1f;
-                nrm[i] = Vector3.up;
-            }
             mesh.uv = uv;
-            mesh.normals = nrm;
+            // Normales calculees et non forcees a Vector3.up : avec du relief, un sol tout droit
+            // s'eclaire comme un plan et la butte disparait completement au rendu.
+            mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
             return SaveMesh(mesh);
         }
 
         static void Quad(List<Vector3> verts, List<int> tris, int[] index, int cx,
-                         float x0, float z0, float y, int i, int j)
+                         float x0, float z0, float[] height, int i, int j)
         {
-            int a = Vertex(verts, index, cx, x0, z0, y, i, j);
-            int b = Vertex(verts, index, cx, x0, z0, y, i + 1, j);
-            int c = Vertex(verts, index, cx, x0, z0, y, i, j + 1);
-            int d = Vertex(verts, index, cx, x0, z0, y, i + 1, j + 1);
+            int a = Vertex(verts, index, cx, x0, z0, height, i, j);
+            int b = Vertex(verts, index, cx, x0, z0, height, i + 1, j);
+            int c = Vertex(verts, index, cx, x0, z0, height, i, j + 1);
+            int d = Vertex(verts, index, cx, x0, z0, height, i + 1, j + 1);
             tris.Add(a); tris.Add(c); tris.Add(b);
             tris.Add(b); tris.Add(c); tris.Add(d);
         }
 
         static int Vertex(List<Vector3> verts, int[] index, int cx,
-                          float x0, float z0, float y, int i, int j)
+                          float x0, float z0, float[] height, int i, int j)
         {
             int key = j * (cx + 1) + i;
             if (index[key] < 0)
             {
                 index[key] = verts.Count;
-                verts.Add(new Vector3(x0 + i * Cell, y, z0 + j * Cell));
+                verts.Add(new Vector3(x0 + i * Cell, height[key], z0 + j * Cell));
             }
             return index[key];
         }
@@ -217,18 +253,44 @@ namespace Gameplay.EditorTools
             tris.Add(b + 1); tris.Add(b + 2); tris.Add(b + 3);
         }
 
-        // Garde minimale au bord de l'emprise routiere, tous reseaux confondus. Positive =
-        // dehors, negative = sous la route. +inf quand aucune route n'est a portee.
-        static float Clearance(RoadNetwork[] nets, Vector3 p)
+        // Hauteur du sol en un point, et au passage : la cellule est-elle hors emprise routiere ?
+        //
+        // Deux choses se superposent ici. Le RELIEF donne la hauteur de base. Puis, a l'approche
+        // d'une route, le sol va CHERCHER la surface de celle-ci : la tuile reste plate en
+        // travers (le kit n'a pas les sommets pour se coucher lateralement), donc c'est au sol de
+        // se raccorder. Une route posee plus bas que le terrain se retrouve ainsi au fond d'un
+        // creux, une route posee plus haut sur un remblai -- sans un asset de plus.
+        //
+        // Au-dela de OverheadIgnore, la route est un OUVRAGE : `ProbeRoad` ne la voit plus, le sol
+        // reste au niveau du terrain et passe dessous. C'est ce qui distingue le pont du creux, et
+        // c'est le meme seuil qui empeche deja le pont de percer le sol a ses pieds.
+        static float Sample(RoadNetwork[] nets, CityTerrain terrain, float baseY, Vector3 p,
+                            out bool free)
         {
-            float best = float.PositiveInfinity;
+            float y = baseY + (terrain != null ? terrain.Height(p.x, p.z) - terrain.transform.position.y : 0f);
+
+            // La requete part de la hauteur du TERRAIN : c'est elle qui decide ce qui est un
+            // ouvrage au-dessus de nous. Faite depuis y = 0, un pont sur une butte de 6 m
+            // passerait pour une route au ras du sol.
+            var q = new Vector3(p.x, y, p.z);
+            float best = float.PositiveInfinity, roadY = y;
             foreach (var net in nets)
             {
                 RoadNetwork.RoadProbe probe;
-                if (!net.ProbeRoad(p, 60f, out probe, OverheadIgnore)) continue;
-                if (probe.clearance < best) best = probe.clearance;
+                if (!net.ProbeRoad(q, 60f, out probe, OverheadIgnore)) continue;
+                if (probe.clearance >= best) continue;
+                best = probe.clearance;
+                roadY = probe.point.y + net.SidewalkHeight;
             }
-            return best;
+
+            free = best >= -Overlap;
+            if (float.IsPositiveInfinity(best)) return y;
+
+            // Bande de raccord elargie avec le denivele : le talus garde une pente constante au
+            // lieu de se raidir avec la profondeur du creux.
+            float band = Mathf.Max(BlendBand, Mathf.Abs(roadY - y) / BlendSlope);
+            float t = 1f - Mathf.Clamp01(best / band);
+            return Mathf.Lerp(y, roadY, t * t * (3f - 2f * t));
         }
 
         // ---------------------------------------------------------------- emprises

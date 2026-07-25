@@ -451,3 +451,123 @@ front -Y, Z-up). FBX riggés → `Assets/Models/City/Pedestrians/Pedestrian_<Tag
 doublon `Nom_1.fbx` au lieu d'écraser. Pour ré-exporter par-dessus : soit copier
 le FBX sur le chemin `Assets/...` existant en filesystem puis `refresh_unity`
 (garde le .meta/guid — préféré), soit supprimer l'ancien avant d'importer.
+
+**Piège `GMTK/ToonLit` — `_RimAmount` est un SEUIL, pas une intensité.** Le shader
+fait `smoothstep(_RimAmount - 0.03, _RimAmount + 0.03, rim)` : mettre `_RimAmount`
+à **0 allume le rim partout**, pas nulle part. Sur une grande surface plane vue en
+incidence rasante (le sol de ville, 1100 m) `rim ≈ 1` sur tout l'écran → la surface
+vire au blanc quelle que soit sa `_BaseColor`, et changer la couleur de base ne
+produit **aucun** effet visible (symptôme trompeur : on croit que le matériau n'est
+pas appliqué). Pour éteindre le rim : `_RimAmount = 1` **et** `_RimColor = black`.
+Même logique mais dans le bon sens pour `_SpecStep` (`smoothstep(_SpecStep, ...)`,
+donc 1 = jamais).
+
+**Piège `GMTK/ToonLit` — aucune point light en Forward+.** Le renderer du projet
+(`Assets/Settings/PC_Renderer.asset`, `m_RenderingMode: 2`) est en **Forward+**, et
+URP y **éteint explicitement** le keyword `_ADDITIONAL_LIGHTS` — source :
+`ForwardLights.cs:500`, `SetKeyword(AdditionalLightsPixel, lightCountCheck &&
+!additionalLightsPerVertex && !m_UseForwardPlus)`. Les lumières additionnelles
+passent par la boucle clusterisée, gardée par `_CLUSTER_LIGHT_LOOP` (ligne 501).
+Un shader qui écrit `#if defined(_ADDITIONAL_LIGHTS)` a donc un bloc **mort** :
+semer 112 point lights ne change **strictement rien** à l'image (vérifié : même
+image bit à bit à intensité 14 et à intensité 300). Correctif :
+`#if defined(_ADDITIONAL_LIGHTS) || defined(_CLUSTER_LIGHT_LOOP)`.
+Test de diagnostic qui tranche en 30 s : deux sphères côte à côte, une en
+`URP/Lit`, une en `GMTK/ToonLit`, une point light au-dessus — si seule la URP/Lit
+s'allume, c'est le shader et pas les lumières.
+
+**Piège `GMTK/ToonLit` #2 — l'atténuation de distance passée dans le quantizer.**
+Même après avoir réparé la garde `_CLUSTER_LIGHT_LOOP` ci-dessus, les point lights
+restaient invisibles. La boucle faisait :
+```hlsl
+float aRamp = ToonRamp(aNdotL * add.shadowAttenuation * add.distanceAttenuation);
+color += albedo * add.color * aRamp;
+```
+URP atténue en 1/d² : à 4.5 m avec `range = 24`, `distanceAttenuation ≈ 0.05`. Avec
+`_RampSteps = 2`, `ToonRamp(0.05)` retourne **exactement 0** — la première bande ne
+démarre qu'à 0.25. Toute lumière ponctuelle était donc écrasée à zéro avant
+d'exister. Correctif : quantifier le **seul angle**, l'atténuation multiplie la
+couleur comme dans URP :
+```hlsl
+float aRamp  = ToonRamp(aNdotL);
+float aAtten = add.distanceAttenuation * add.shadowAttenuation;
+color += albedo * add.color * aRamp * aAtten;
+```
+Règle générale : ne jamais faire entrer une grandeur à décroissance continue dans
+un quantizer à bandes — elle tombe dans la bande 0 et disparaît.
+Astuce de diagnostic qui a débloqué les deux bugs : mettre un `color += float3(0.6,0,0)`
+juste après le `#if`. Si tout devient rouge, le bloc s'exécute et le bug est
+**dedans** ; sinon c'est la garde ou le shader qui ne se recompile pas.
+
+**Piège `GMTK/ToonLit` #3 — une trame posée dans l'ombre ne fait pas de la BD, elle
+fait de la boue.** Le halftone s'appliquait dans les zones d'ombre
+(`ink = Halftone(...) * (1 - ramp)`) avec une encre quasi-noire `(0.08,0.06,0.12)`.
+Dans une scène nocturne, « en ombre » veut dire **partout** : les façades étaient
+tramées à 100 % sur toute leur surface, ce qui lit comme une texture sale et non
+comme une trame comic. Pire, ça **masquait le diagnostic** — on croyait les
+bâtiments mal éclairés alors qu'ils ont un albédo clair (0.78) et que c'était
+l'encre qui les noircissait. Retirer la trame a fait apparaître des façades bien
+trop pâles, et il a fallu redurcir `_ShadowTint` en conséquence. La trame vit
+maintenant dans la **retombée des flaques néon** (`pool * (1 - pool)`), là où il y
+a un dégradé réel à discrétiser.
+Règle générale : une trame a besoin d'un **gradient** pour exister. La poser sur une
+zone uniformément sombre ne produit qu'un bruit uniforme.
+
+**Piège `GMTK/ToonLit` #4 — la rim light crame les grands plans, et le coupable se
+cache bien.** Symptôme : une nappe blanche informe sur la chaussée devant le joueur.
+Trois suspects ont été éliminés dans l'ordre avant de trouver, chacun par un test à
+une valeur (`_RimNeonBoost = 0`, `_SpecStep = 1`, plafonnement de la flaque) — aucun
+n'était le bon. Le coupable était le terme `_RimColor.rgb * NdotL` de la rim
+**principale** : sur un plan horizontal vu en rasant, `rim = 1 - dot(N,V) ≈ 1` sur tout
+l'écran, `NdotL ≈ 0.62`, `_RimColor` blanc → **+0.62 de blanc pur sur toute la route**.
+Deux correctifs, à garder ensemble :
+- fond du problème, dans le shader — une rim simule une lumière qui **contourne** une
+  silhouette, donc elle n'existe que si la lumière est derrière l'objet :
+  `float back = saturate(-dot(L, V));` en facteur des deux termes (lune et néons) ;
+- sur les grands plans (`City_Rue`, `RoadMat`) — `_RimColor = black` en plus, tout en
+  gardant `_RimAmount` bas pour que la rim **néon** continue de fonctionner.
+
+Corollaire : **`add.color` contient déjà l'intensité de la lampe** (31 pour un
+lampadaire). L'injecter tel quel comme énergie — dans la rim ou dans la flaque — crame
+la surface. Séparer teinte (`add.color / max3(add.color)`) et couverture
+(`saturate(distanceAttenuation * intensité)`) : l'intensité règle alors la **portée** de
+la flaque, un paramètre matériau règle sa force.
+
+Corollaire 2 : pour incruster une trame dans un dégradé, **moduler et ne jamais
+substituer**. `lerp(pool, dots, band)` remplace une couverture faible par un point
+binaire → les points brillent plus fort que la lumière qu'ils représentent, et la trame
+déborde sur toute l'image. `pool * lerp(1, dots, band)` la borne à la flaque réelle.
+
+Corollaire 3 : **une couverture de flaque s'accumule en `max`, jamais en somme.** Après
+avoir borné chaque lampe à 1, sommer sur les 112 lampes de `road.unity` redonne
+exactement le même symptôme — nappe uniforme sur toute la chaussée — mais en couleur,
+puisque la teinte moyenne d'une vingtaine de lampes vire au crème. Une flaque est
+dominée par la lampe la plus proche : `cover = max(cover, w)`. Garder une somme séparée
+uniquement pour pondérer la teinte moyenne.
+Le symptôme « grande zone claire informe devant le joueur » a donc **trois causes
+distinctes** qui se ressemblent — rim sur plan rasant, énergie non bornée, couverture
+sommée. Corriger l'une laisse les autres en place : vérifier les trois.
+
+Corollaire 4 : **une trame en espace écran ne se voit qu'en mouvement**, et elle est
+laide. `Halftone(IN.positionCS.xy, …)` ancre les cellules au pixel : en jeu, le décor
+défile pendant que les points restent collés à l'écran — ça lit comme des saletés sur
+l'objectif, pas comme une trame imprimée. Invisible sur une capture fixe, évident
+manette en main. Correctif : projeter la grille en **espace monde** sur l'axe dominant
+de la normale (triplanaire simplifiée), en unités monde (~0.3 m par cellule). Les points
+collent alors aux surfaces et prennent la perspective. Ajouter une extinction
+automatique quand une cellule descend sous le pixel, sinon moiré au loin :
+`saturate(1 - (fwidth(uv.x) + fwidth(uv.y)))` — pas de paramètre à régler.
+Vaut pour tout effet graphique plaqué : trame, hachures, grain d'encre. Le grain de film
+et l'aberration chromatique, eux, sont *censés* être en espace écran (ce sont des défauts
+de l'objectif/du tirage) — la distinction est celle-là.
+
+**Piège Unity — `FindFirstObjectByType<Light>()` ne renvoie pas la directionnelle.**
+L'ordre n'est pas garanti : dans `road.unity` (112 point lights + 1 directionnelle)
+il a renvoyé `Neon_bat_24`. Un `light.color = moonlight; light.intensity = 1.6f;`
+censé régler le clair de lune a donc repeint une néon en blanc, silencieusement, et
+laissé la vraie directionnelle inchangée — bug invisible sur un render puisqu'une
+seule lumière sur 113 change. Toujours filtrer explicitement :
+```csharp
+foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+    if (l.type == LightType.Directional) { ... }
+```

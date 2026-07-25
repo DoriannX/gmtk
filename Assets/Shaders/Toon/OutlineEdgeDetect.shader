@@ -8,6 +8,9 @@ Shader "GMTK/OutlineEdgeDetect"
         _DepthSensitivity  ("Depth Sensitivity", Range(0, 40)) = 12
         _NormalThreshold   ("Normal Threshold", Range(0, 2)) = 0.35
         _NormalSensitivity ("Normal Sensitivity", Range(0, 8)) = 3
+        // Encre imprimee plutot que vectorielle : fait respirer l'epaisseur du trait.
+        // 0 = comportement d'origine, annulable d'un slider.
+        _InkJitter         ("Ink Jitter", Range(0, 1))       = 0.35
     }
 
     SubShader
@@ -35,10 +38,30 @@ Shader "GMTK/OutlineEdgeDetect"
             float  _DepthSensitivity;
             float  _NormalThreshold;
             float  _NormalSensitivity;
+            float  _InkJitter;
 
             float SampleEyeDepth(float2 uv)
             {
                 return LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
+            }
+
+            // Bruit de valeur basse frequence, en espace ecran. Meme principe de hash
+            // que StarNightSky.shader.
+            float Hash21(float2 p)
+            {
+                p = frac(p * float2(123.34, 456.21));
+                p += dot(p, p + 45.32);
+                return frac(p.x * p.y);
+            }
+
+            float InkNoise(float2 pixelPos)
+            {
+                float2 c = pixelPos / 18.0;          // cellules d'environ 18 px
+                float2 i = floor(c), f = frac(c);
+                f = f * f * (3.0 - 2.0 * f);         // lissage
+                float a = Hash21(i), b = Hash21(i + float2(1, 0));
+                float d = Hash21(i + float2(0, 1)), e = Hash21(i + float2(1, 1));
+                return lerp(lerp(a, b, f.x), lerp(d, e, f.x), f.y);
             }
 
             half4 frag (Varyings input) : SV_Target
@@ -48,7 +71,10 @@ Shader "GMTK/OutlineEdgeDetect"
 
                 half4 sceneColor = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv);
 
-                float2 o = _OutlineThickness / _ScreenParams.xy;
+                // Epaisseur modulee par le bruit : le trait respire comme une encre
+                // posee, au lieu d'avoir la regularite d'un contour vectoriel.
+                float jitter = lerp(1.0, 0.45 + 1.1 * InkNoise(uv * _ScreenParams.xy), _InkJitter);
+                float2 o = (_OutlineThickness * jitter) / _ScreenParams.xy;
 
                 // Roberts cross sample offsets (diagonals)
                 float2 uv0 = uv + float2( o.x,  o.y);

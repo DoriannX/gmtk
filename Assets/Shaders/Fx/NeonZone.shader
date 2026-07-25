@@ -32,10 +32,19 @@ Shader "GMTK/NeonZone"
         _ScanWidth("Scan : largeur", Range(0.005, 0.5)) = 0.05
         _ScanAlpha("Scan : opacite", Range(0, 1)) = 0.35
 
+        [HDR] _LockedColor("Couleur verrouillee", Color) = (1, 0.22, 0.16, 1)
+        _Locked("Verrouille", Range(0,1)) = 0
+        _Deny("Flash de refus", Range(0,1)) = 0
+        _StripeDensity("Rayures : densite", Range(1, 40)) = 9
+        _StripeSpeed("Rayures : defilement", Float) = 0.25
+        _StripeAlpha("Rayures : opacite", Range(0, 1)) = 0.55
+
         _BaseGlow("Liseré au sol", Range(0, 3)) = 1.2
         _FadeStart("Fondu : hauteur de depart", Range(0, 1)) = 0.1
         _Squash("Squash (1 = repos)", Range(0.2, 2)) = 1
         _WallHeight("Hauteur des parois (m)", Float) = 1.8
+        _MaxGroundRise("Relief max dans l'emprise (m)", Float) = 3
+        _MaxOutsideRise("Relief max hors emprise (m)", Float) = 0.6
         _PulseSpeed("Pulse (valide) : vitesse", Float) = 7.0
     }
 
@@ -79,12 +88,14 @@ Shader "GMTK/NeonZone"
             };
 
             CBUFFER_START(UnityPerMaterial)
-                float4 _BaseColor, _FullColor, _DoneColor;
+                float4 _BaseColor, _FullColor, _DoneColor, _LockedColor;
+                float _Locked, _Deny, _StripeDensity, _StripeSpeed, _StripeAlpha;
                 float _Progress, _Done;
                 float _EdgeWidth, _EdgeGlow, _Intensity, _WallAlpha, _Fresnel;
                 float _GridSize, _GridAlpha;
                 float _ScanSpeed, _ScanWidth, _ScanAlpha;
-                float _BaseGlow, _FadeStart, _Squash, _WallHeight, _PulseSpeed;
+                float _BaseGlow, _FadeStart, _Squash, _WallHeight;
+                float _MaxGroundRise, _MaxOutsideRise, _PulseSpeed;
             CBUFFER_END
 
             Varyings vert(Attributes IN)
@@ -132,11 +143,25 @@ Shader "GMTK/NeonZone"
             #else
                 bool sky = rawD >= 1.0 - 1e-6;
             #endif
-                // rien derriere (ciel) -> on retombe sur le bas du cube, sinon la paroi
-                // disparaitrait des qu'elle se detache sur l'horizon.
-                float groundY = sky
-                    ? IN.bottomWS
-                    : ComputeWorldSpacePosition(suv, rawD, UNITY_MATRIX_I_VP).y;
+                float3 sceneWS = ComputeWorldSpacePosition(suv, rawD, UNITY_MATRIX_I_VP);
+
+                // FILTRE D'EMPRISE. La profondeur donne la surface VISIBLE derriere le pixel, pas
+                // forcement le sol sous la paroi : une rampe 10 m plus loin ferait grimper la
+                // base et le motif se peindrait sur elle. On ne garde donc l'echantillon que
+                // s'il tombe dans l'emprise du cube (test en espace objet, donc valable meme
+                // tourne / mis a l'echelle) ; sinon on retombe sur le bas du cube -- comme pour
+                // le ciel, ou il n'y a rien derriere.
+                float3 sceneOS = mul(unity_WorldToObject, float4(sceneWS, 1.0)).xyz;
+                bool inFootprint = max(abs(sceneOS.x), abs(sceneOS.z)) <= 0.5 + 1e-3;
+
+                // Hors emprise on NE jette PAS l'echantillon : vu de l'interieur du cube, la
+                // quasi-totalite des pixels regardent le sol au-dela de la zone, et retomber
+                // sur le bas du cube decalait toute la tranche sous le terrain (parois
+                // invisibles). On le garde, simplement BRIDE : une rampe derriere ne peut plus
+                // faire grimper la base de plus de _MaxGroundRise.
+                float groundY = sky ? IN.bottomWS : sceneWS.y;
+                float rise = inFootprint ? _MaxGroundRise : _MaxOutsideRise;
+                groundY = clamp(groundY, IN.bottomWS, IN.bottomWS + rise);
 
                 // h = 0 au sol (qui ondule avec le relief), 1 en haut de paroi. Le squash
                 // vertical joue ici : il comprime/etire la tranche visible depuis le sol.
@@ -181,7 +206,16 @@ Shader "GMTK/NeonZone"
                 float3 col = lerp(_BaseColor.rgb, _FullColor.rgb, max(_Progress * 0.6, filled));
                 col = lerp(col, _DoneColor.rgb, _Done);
 
-                float pulse = 1.0 + _Done * 0.45 * sin(_Time.y * _PulseSpeed);
+                // --- VERROU : rayures de danger diagonales et defilantes (lecture "mur") ---
+                float sd = (uv.x + h) * _StripeDensity - _Time.y * _StripeSpeed * (1.0 + _Deny * 6.0);
+                float sv = abs(frac(sd) - 0.5);
+                float stripe = 1.0 - smoothstep(0.0, fwidth(sd) * 1.5 + 0.02, sv - 0.13);
+                col = lerp(col, _LockedColor.rgb, _Locked);
+                col = lerp(col, float3(1.0, 1.0, 1.0), _Deny * 0.75);   // claque blanche au refus
+
+                float pulse = 1.0 + _Done * 0.45 * sin(_Time.y * _PulseSpeed)
+                                  + _Locked * 0.18 * sin(_Time.y * 3.1)
+                                  + _Deny * 1.4;
 
                 // liseré vif au contact du sol -> c'est lui qui dessine le carré au sol
                 float baseLine = 1.0 - smoothstep(0.0, 0.15, h);
@@ -191,6 +225,9 @@ Shader "GMTK/NeonZone"
                 // franche, elle s'evapore. Sinon le trait du haut la referme visuellement.
                 float fade = 1.0 - smoothstep(_FadeStart, 1.0, h);
                 fade *= fade;
+                // verrouillee, la paroi ne doit PAS s'evaporer : elle est solide, elle se voit
+                // jusqu'en haut, sinon on croit pouvoir passer par-dessus.
+                fade = lerp(fade, max(fade, 0.75), _Locked);
 
                 float a =
                       core * 1.0
@@ -201,7 +238,8 @@ Shader "GMTK/NeonZone"
                     + filled * _WallAlpha * 1.1
                     + fillLine * 0.9;
 
-                a = saturate(a * fade + baseLine * _BaseGlow) * pulse;
+                float lockWall = _Locked * (0.08 + stripe * _StripeAlpha);   // le mur de rayures
+                a = saturate((a + lockWall) * fade + baseLine * _BaseGlow + _Deny * 0.45) * pulse;
                 return half4(col * _Intensity, a);
             }
             ENDHLSL

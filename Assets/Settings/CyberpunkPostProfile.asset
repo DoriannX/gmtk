@@ -86,7 +86,7 @@ MonoBehaviour:
     m_Value: 0.85
   intensity:
     m_OverrideState: 1
-    m_Value: 1.6
+    m_Value: 1.2
   scatter:
     m_OverrideState: 1
     m_Value: 0.75
@@ -132,6 +132,29 @@ MonoBehaviour:
   - {fileID: 7020447875311110174}
   - {fileID: 3964722604622922659}
   - {fileID: -2575429419015211997}
+  - {fileID: 589333408252216472}
+--- !u!114 &589333408252216472
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5485954d14dfb9a4c8ead8edb0ded5b1, type: 3}
+  m_Name: LiftGammaGain
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.LiftGammaGain
+  active: 1
+  lift:
+    m_OverrideState: 1
+    m_Value: {x: 1, y: 1, z: 1.03, w: 0.01}
+  gamma:
+    m_OverrideState: 0
+    m_Value: {x: 1, y: 1, z: 1, w: 0}
+  gain:
+    m_OverrideState: 0
+    m_Value: {x: 1, y: 1, z: 1, w: 0}
 --- !u!114 &3036385722800246144
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -147,7 +170,7 @@ MonoBehaviour:
   active: 1
   temperature:
     m_OverrideState: 1
-    m_Value: -18
+    m_Value: -11
   tint:
     m_OverrideState: 1
     m_Value: 14
@@ -166,7 +189,7 @@ MonoBehaviour:
   active: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 0.3
+    m_Value: 0.5
 --- !u!114 &7020447875311110174
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -188,7 +211,7 @@ MonoBehaviour:
     m_Value: {x: 0.5, y: 0.5}
   intensity:
     m_OverrideState: 1
-    m_Value: 0.42
+    m_Value: 0.26
   smoothness:
     m_OverrideState: 1
     m_Value: 0.55
@@ -210,16 +233,16 @@ MonoBehaviour:
   active: 1
   postExposure:
     m_OverrideState: 1
-    m_Value: 0.1
+    m_Value: 0.3
   contrast:
     m_OverrideState: 1
-    m_Value: 28
+    m_Value: 10
   colorFilter:
     m_OverrideState: 1
-    m_Value: {r: 0.85, g: 0.85, b: 1, a: 1}
+    m_Value: {r: 0.94, g: 0.94, b: 1, a: 1}
   hueShift:
     m_OverrideState: 0
     m_Value: 0
   saturation:
     m_OverrideState: 1
-    m_Value: 22
+    m_Value: 32

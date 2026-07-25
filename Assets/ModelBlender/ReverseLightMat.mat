@@ -99,6 +99,7 @@ Material:
     - _AddPrecomputedVelocity: 0
     - _AlphaClip: 0
     - _AlphaToMask: 0
+    - _AmbientStrength: 0.7
     - _Blend: 0
     - _BlendModePreserveSpecular: 1
     - _BumpScale: 1
@@ -115,7 +116,7 @@ Material:
     - _Glossiness: 0.7
     - _GlossyReflections: 1
     - _HalftoneMaxRadius: 0.85
-    - _HalftoneScale: 6
+    - _HalftoneScale: 10
     - _HalftoneStrength: 1
     - _Metallic: 0
     - _Mode: 0
@@ -126,6 +127,7 @@ Material:
     - _RampSteps: 2
     - _ReceiveShadows: 1
     - _RimAmount: 0.5
+    - _RimNeonBoost: 1.6
     - _RimPower: 4
     - _Smoothness: 0.7
     - _SmoothnessTextureChannel: 0
@@ -135,6 +137,7 @@ Material:
     - _SrcBlendAlpha: 1
     - _Surface: 0
     - _UVSec: 0
+    - _Unlit: 0
     - _WorkflowMode: 1
     - _XRMotionVectorsPass: 1
     - _ZWrite: 1
@@ -144,7 +147,7 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _HalftoneColor: {r: 0.079999976, g: 0.059999965, b: 0.11999995, a: 1}
     - _RimColor: {r: 1, g: 1, b: 1, a: 1}
-    - _ShadowTint: {r: 0.48, g: 0.324, b: 0.44, a: 1}
+    - _ShadowTint: {r: 0.13, g: 0.09, b: 0.26, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _ToonSpecColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []

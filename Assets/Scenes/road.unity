@@ -25969,10 +25969,25 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Gameplay.City.RoadNetwork
   tileStraight: {fileID: 919132149155446097, guid: 92daf1c7cfc36de438a7582a0669adb4, type: 3}
+  tilePieton: {fileID: 0}
+  tileEgouts: {fileID: 0}
   junction3: {fileID: 919132149155446097, guid: 46bd4128ac77da54fbdbdc2649320d84, type: 3}
   junction4: {fileID: 919132149155446097, guid: a3f5a081f270da5488a72d47f22e45d3, type: 3}
   deadEnd: {fileID: 919132149155446097, guid: 5f32b0a9f9cec394897dfc0b226bf9bd, type: 3}
   roundabout: {fileID: 919132149155446097, guid: 125ad3d31f6294c489b81999f6448251, type: 3}
+  slotMaterials:
+  - slot: M_bitume
+    material: {fileID: 2100000, guid: cb747b881e832ea47a21a31783786daf, type: 2}
+  - slot: M_SolTrottoir
+    material: {fileID: 2100000, guid: 956fc94884822694c8ec9dcac572090e, type: 2}
+  - slot: M_BordureTrottoir
+    material: {fileID: 2100000, guid: dc189857d8ee6a645bec8a06e93fcb26, type: 2}
+  - slot: M_Neon_Route
+    material: {fileID: 2100000, guid: 4552f4af4926fdf429c7a6a9313d088c, type: 2}
+  - slot: M_PassagePieton
+    material: {fileID: 2100000, guid: b66f8f3bcfb11154988d0655c8d582a1, type: 2}
+  - slot: M_plaqueEgouts
+    material: {fileID: 2100000, guid: 8a7d94309eedcef42a10303078299a09, type: 2}
   lengthOnZ: 1
   arms3:
   - 0
@@ -25990,6 +26005,20 @@ MonoBehaviour:
   curvature: 0.35
   snapToGround: 1
   groundHeight: 0
+  deckFascia: 0.5
+  parapetHeight: 0.9
+  pierEvery: 14
+  pierSize: 1.2
+  variantSeed: 4242
+  pietonChance: 0.45
+  egoutsChance: 0.2
+  stairWidth: 6
+  stairRiser: 0.18
+  stairSkirt: 1.5
+  egoutHalfWidth: 5
+  egoutDepth: 4
+  egoutWall: 4
+  egoutLip: 3.5
   toonShading: 1
   asphaltColor: {r: 0.24, g: 0.24, b: 0.26, a: 1}
   roadMaterial: {fileID: 2100000, guid: cb747b881e832ea47a21a31783786daf, type: 2}
@@ -25998,74 +26027,104 @@ MonoBehaviour:
   - pos: {x: -70, y: 0, z: 0}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: -35, y: 0, z: 0}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: 0, y: 0, z: 25}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: 35, y: 0, z: 40}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: 0.16714525, y: 0, z: -29.669228}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: 116.84396, y: 0, z: -28.285572}
     roundabout: 0
     yaw: 357.99036
+    lift: 0
   - pos: {x: -40, y: 0, z: -30}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: -21.841444, y: 0, z: -30.111471}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: -19.742653, y: 0, z: -84.64484}
     roundabout: 0
     yaw: 10.966127
+    lift: 0
   - pos: {x: -17.130123, y: 0, z: -96.10501}
     roundabout: 0
     yaw: 350.9494
+    lift: 0
   - pos: {x: -7.4659996, y: 0, z: -104.175354}
     roundabout: 0
     yaw: 356.7843
+    lift: 0
   - pos: {x: 5.628912, y: 0, z: -105.295044}
     roundabout: 0
     yaw: 352.8834
+    lift: 0
   - pos: {x: 13.227758, y: 0, z: -94.53909}
     roundabout: 0
     yaw: 0
+    lift: 0
   - pos: {x: 12.505194, y: 0, z: -80.48625}
     roundabout: 0
     yaw: 0
+    lift: 0
   segments:
   - a: 0
     b: 1
+    kind: 0
   - a: 1
     b: 2
+    kind: 0
   - a: 2
     b: 3
+    kind: 0
   - a: 2
     b: 4
+    kind: 0
   - a: 4
     b: 5
+    kind: 0
   - a: 4
     b: 7
+    kind: 0
   - a: 7
     b: 6
+    kind: 0
   - a: 7
     b: 8
+    kind: 0
   - a: 8
     b: 9
+    kind: 0
   - a: 9
     b: 10
+    kind: 0
   - a: 10
     b: 11
+    kind: 0
   - a: 11
     b: 12
+    kind: 0
   - a: 12
     b: 13
+    kind: 0
   - a: 13
     b: 4
+    kind: 0
+  tileOverrides: []
+  liftCaptured: 0
 --- !u!4 &1161888984
 Transform:
   m_ObjectHideFlags: 0

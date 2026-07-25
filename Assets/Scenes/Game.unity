@@ -708,6 +708,19 @@ MonoBehaviour:
   junction4: {fileID: 919132149155446097, guid: a3f5a081f270da5488a72d47f22e45d3, type: 3}
   deadEnd: {fileID: 919132149155446097, guid: 5f32b0a9f9cec394897dfc0b226bf9bd, type: 3}
   roundabout: {fileID: 919132149155446097, guid: 125ad3d31f6294c489b81999f6448251, type: 3}
+  slotMaterials:
+  - slot: M_bitume
+    material: {fileID: 2100000, guid: cb747b881e832ea47a21a31783786daf, type: 2}
+  - slot: M_SolTrottoir
+    material: {fileID: 2100000, guid: 956fc94884822694c8ec9dcac572090e, type: 2}
+  - slot: M_BordureTrottoir
+    material: {fileID: 2100000, guid: dc189857d8ee6a645bec8a06e93fcb26, type: 2}
+  - slot: M_Neon_Route
+    material: {fileID: 2100000, guid: 4552f4af4926fdf429c7a6a9313d088c, type: 2}
+  - slot: M_PassagePieton
+    material: {fileID: 2100000, guid: b66f8f3bcfb11154988d0655c8d582a1, type: 2}
+  - slot: M_plaqueEgouts
+    material: {fileID: 2100000, guid: 8a7d94309eedcef42a10303078299a09, type: 2}
   lengthOnZ: 1
   arms3:
   - 0

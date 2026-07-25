@@ -219,35 +219,13 @@ arête commune au même endroit, donc pas de T-junction ni de micro-fissure apr�
 Reste à juger manette en main : la pente est-elle avalable, la crête envoie-t-elle
 bien en l'air, et surtout la caméra (piège 2, toujours ouvert).
 
-## Piege camera : voir le joueur a travers les murs
-
-Regle : pas de raycast d'occlusion sur `CarFollowCamera`. Rapprocher la camera
-quand un mur s'interpose casse le cadrage a chaque passage sous un pont, et en
-ville verticale ca arrive tout le temps.
-
-A la place, c'est le joueur qui se redessine. `Assets/Shaders/Fx/SeeThrough.shader`
-est un pass `ZTest Greater` / `ZWrite Off` en queue Transparent : il ne peint que
-les pixels du joueur situes *derriere* de la geometrie opaque. Aucun mur n'a
-besoin d'etre modifie, donc ca marche avec le kit ville, les ponts generes et
-tout ce qu'on posera plus tard.
-
-Look : degrade cyan -> magenta par fresnel (le bord de la silhouette tire vers le
-magenta) plus des rayures diagonales en espace ecran qui defilent. Les rayures
-sont en espace ecran exprès : collees au modele elles auraient lu comme une
-texture, la elles glissent et ca lit hologramme.
-
-Montage : `SeeThroughSilhouette` sur le prefab `PlayerTruck` ajoute le materiau en
-second slot de chaque `MeshRenderer` au `Start`. Les meshes du joueur sont a un
-submesh, donc un slot suffit a redessiner tout le mesh — un mesh multi-submesh ne
-verrait que son dernier submesh silhouette.
-
-Effet de bord assume : le joueur se voit aussi a travers lui-meme (la roue
-derriere le chassis). Discret et lisible, une passe stencil couterait plus cher
-que ce que ca gagne.
-
 ## Piege camera : la camera qui traverse le decor
 
-Abandonne : un shader qui perce un trou dans les occulteurs. Le decoupage par
+Abandonne, essai 1 : silhouette du joueur en `ZTest Greater` / `ZWrite Off`
+(degrade cyan -> magenta, rayures ecran facon hologramme). Ca montrait ou est le
+joueur, pas ou on va — inutilisable pour conduire.
+
+Abandonne, essai 2 : un shader qui perce un trou dans les occulteurs. Le decoupage par
 pixel marchait (case de BD, bord en scanlines glitchees) mais le rendu n'a pas
 convaincu, et l'effet ne couvrait de toute facon que les materiaux `GMTK/ToonLit`
 -- le kit ville est en URP/Lit. Ce qui reste de l'essai, en negatif : c'est le

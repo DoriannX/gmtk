@@ -502,7 +502,36 @@ namespace Gameplay.City
             if (j == null || j.asset == null || j.armRadius == null) return 0f;
             float r = 0f;
             foreach (float a in j.armRadius) r = Mathf.Max(r, a);
+            // L'ASSET deborde de ses bras : une impasse est une tuile pleine largeur montee sur
+            // un bras court. En ne comptant que les bras, le sol se croyait libre la ou il y a
+            // encore du bitume, et remontait par-dessus le bord de l'asset -- jusqu'a un metre
+            // au pied d'une rampe, ou l'asset est en plus couche dans la pente.
+            if (AssetBounds(j.asset, out Bounds ab))
+                r = Mathf.Max(r, new Vector2(ab.extents.x, ab.extents.z).magnitude);
             return r;
+        }
+
+        // Hauteur de la SURFACE d'un croisement a l'aplomb d'un point du monde.
+        //
+        // Un carrefour est COUCHE DANS LA PENTE (voir Junction.pitch) : sa surface n'est pas
+        // horizontale, et la prendre pour telle se paie cher au raccord avec le sol -- au pied
+        // d'une rampe, le bord bas de l'asset est un metre sous son centre, et le sol cale sur le
+        // centre enterrait la route.
+        public float JunctionSurfaceY(int i, Vector3 world)
+        {
+            EnsureAdjacency();
+            if (junctions == null || junctions.Length != nodes.Count) ComputeJunctions(false);
+            var j = junctions[i];
+            Vector3 c = transform.TransformPoint(
+                nodes[i].pos + Vector3.up * (SurfaceY + (j != null ? PitchLift(j, NodeDegree(i)) : 0f)));
+            if (j == null) return c.y + SidewalkHeight;
+
+            Vector3 up = (transform.rotation * NodeRotation(j)) * Vector3.up;
+            if (up.y < 0.1f) return c.y + SidewalkHeight;   // presque vertical : le plan ne dit plus rien
+
+            // Plan passant par c, de normale up.
+            float dx = world.x - c.x, dz = world.z - c.z;
+            return c.y - (dx * up.x + dz * up.z) / up.y + SidewalkHeight;
         }
 
         public float SegmentLength(int k)

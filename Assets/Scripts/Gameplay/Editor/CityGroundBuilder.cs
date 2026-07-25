@@ -58,6 +58,11 @@ namespace Gameplay.EditorTools
         // Pente maximale de ce raccord. Une route enfoncee de 6 m rattrapee sur 8 m ferait un mur
         // a 37 deg ; la bande s'elargit donc avec le denivele pour que le talus reste roulable.
         const float BlendSlope = 0.5f;
+        // Retrait du sol sous la surface de la route, et pente de sa plongee sous l'emprise.
+        // 0.06 + 3.3 * 0.15 = 0.55 m au plus profond, soit encore au-dessus du bas de la tuile
+        // (0.63 avec la retombee) : le sol reste cache DANS l'epaisseur de la route.
+        const float RoadSink = 0.06f;
+        const float UnderSlope = 0.15f;
         // Distance maximale interrogee autour d'un point pour trouver une route. Elle borne le
         // COUT de la generation bien plus que sa justesse : une requete de proximite echantillonne
         // la spline, et la portee sert aussi de prefiltre. A 60 m, aucun segment n'etait ecarte et
@@ -328,11 +333,23 @@ namespace Gameplay.EditorTools
                 if (!net.ProbeRoad(q, ProbeRange, out probe, OverheadIgnore)) continue;
                 if (probe.clearance >= best) continue;
                 best = probe.clearance;
-                roadY = probe.point.y + net.SidewalkHeight;
+                // Un croisement est couche dans la pente : sa surface a l'aplomb du point n'est
+                // PAS la hauteur de son centre. Au pied d'une rampe, l'ecart atteignait un metre
+                // et le sol enterrait la route.
+                roadY = probe.node >= 0
+                    ? net.JunctionSurfaceY(probe.node, q)
+                    : probe.point.y + net.SidewalkHeight;
             }
 
             free = best >= -Overlap;
             if (float.IsPositiveInfinity(best)) return y;
+
+            // Le sol vise un poil SOUS le trottoir, et plonge d'autant plus qu'il s'enfonce sous
+            // l'emprise. Cale a la meme hauteur, il se battait avec le trottoir dans le tampon de
+            // profondeur : deux surfaces distantes de 2 cm sur 3,3 m de recouvrement, ca ressort
+            // en pointilles le long de chaque route. La plongee reste sous l'epaisseur de la
+            // tuile, donc invisible.
+            roadY -= RoadSink + Mathf.Max(0f, -best) * UnderSlope;
 
             // Bande de raccord elargie avec le denivele : le talus garde une pente constante au
             // lieu de se raidir avec la profondeur du creux.

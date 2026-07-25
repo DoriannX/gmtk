@@ -111,7 +111,10 @@ namespace Gameplay.City
         // retombee) et ne jamais laisser de jour.
         private const float PierBite = 0.05f;
         private const float MaxJunctionPier = 2.5f;   // cote max d'une pile de croisement
-        private const float CapAbove = 1.5f;      // au-dela, le croisement est un OUVRAGE : on ferme son dessous
+        // Au-dela, la route est un OUVRAGE : dessous ferme, garde-corps, piles, et le sol passe
+        // dessous au lieu de monter la chercher. En dessous, c'est un REMBLAI. Doit rester en
+        // phase avec CityGroundBuilder.OverheadIgnore.
+        private const float CapAbove = 4f;
         private const HideFlags GenFlags = HideFlags.DontSave | HideFlags.NotEditable;
         private const float MinSegment = 2f;      // bras plus proches que ca -> segment saute
         // Pas des points de suivi du relief, en metres. Chaque point de plus alourdit TOUTES les
@@ -555,13 +558,46 @@ namespace Gameplay.City
             if (j == null || j.asset == null || j.armRadius == null) return 0f;
             float r = 0f;
             foreach (float a in j.armRadius) r = Mathf.Max(r, a);
-            // L'ASSET deborde de ses bras : une impasse est une tuile pleine largeur montee sur
-            // un bras court. En ne comptant que les bras, le sol se croyait libre la ou il y a
-            // encore du bitume, et remontait par-dessus le bord de l'asset -- jusqu'a un metre
-            // au pied d'une rampe, ou l'asset est en plus couche dans la pente.
             if (AssetBounds(j.asset, out Bounds ab))
                 r = Mathf.Max(r, new Vector2(ab.extents.x, ab.extents.z).magnitude);
             return r;
+        }
+
+        // Emprise du croisement DANS UNE DIRECTION donnee (monde, a plat).
+        //
+        // Un cercle ne va pas : l'asset est un RECTANGLE. Le cercle inscrit laisse ses coins
+        // dehors -- le sol se croit libre la ou il y a encore du bitume et remonte par-dessus.
+        // Le cercle circonscrit, lui, deborde de 3 m au bout d'une impasse, et le sol s'y trouve
+        // decoupe alors qu'aucune route ne le recouvre : un trou carre en bout de rue.
+        //
+        // On rend donc la distance du centre au bord du rectangle dans cette direction, ce qui
+        // colle a l'asset dans les deux cas.
+        public float JunctionReach(int i, Vector3 dir)
+        {
+            if (i < 0 || i >= nodes.Count) return 0f;
+            EnsureAdjacency();
+            if (junctions == null || junctions.Length != nodes.Count) ComputeJunctions(false);
+            var j = junctions[i];
+            if (j == null || j.asset == null) return 0f;
+
+            float arms = 0f;
+            if (j.armRadius != null) foreach (float a in j.armRadius) arms = Mathf.Max(arms, a);
+            if (!AssetBounds(j.asset, out Bounds ab)) return arms;
+
+            // Direction ramenee dans le repere du croisement (yaw seul : le tangage ne change
+            // pas l'emprise vue de dessus).
+            Vector3 fwd = NodeRotation(j) * Vector3.forward;
+            float yaw = Mathf.Atan2(fwd.x, fwd.z);
+            float cs = Mathf.Cos(-yaw), sn = Mathf.Sin(-yaw);
+            float ux = dir.x * cs + dir.z * sn;
+            float uz = -dir.x * sn + dir.z * cs;
+            float len = Mathf.Sqrt(ux * ux + uz * uz);
+            if (len < 1e-5f) return Mathf.Max(arms, Mathf.Min(ab.extents.x, ab.extents.z));
+            ux /= len; uz /= len;
+
+            float hx = Mathf.Max(0.01f, ab.extents.x), hz = Mathf.Max(0.01f, ab.extents.z);
+            float box = 1f / Mathf.Max(Mathf.Abs(ux) / hx, Mathf.Abs(uz) / hz);
+            return Mathf.Max(arms, box);
         }
 
         // Hauteur de la SURFACE d'un croisement a l'aplomb d'un point du monde.
@@ -657,11 +693,13 @@ namespace Gameplay.City
             // bras) : sans ce second passage, on peut poser un immeuble en plein carrefour.
             for (int i = 0; i < nodes.Count; i++)
             {
-                float r = JunctionRadius(i);
-                if (r <= 0f) continue;
                 Vector3 p = nodes[i].pos;
                 if (p.y - local.y > maxHeightAbove) continue;   // croisement en l'air
                 float d = Vector2.Distance(flatXZ, new Vector2(p.x, p.z));
+                // Emprise prise DANS LA DIRECTION du point : l'asset est un rectangle, un rayon
+                // unique deborde au bout d'une impasse ou laisse ses coins dehors.
+                float r = JunctionReach(i, new Vector3(local.x - p.x, 0f, local.z - p.z));
+                if (r <= 0f) continue;
                 if (d - r >= bestClear) continue;
 
                 bestClear = d - r;

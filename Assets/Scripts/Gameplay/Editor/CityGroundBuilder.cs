@@ -44,10 +44,17 @@ namespace Gameplay.EditorTools
         const float Overlap = 3.3f;
         // Au-dela de cette hauteur au-dessus du sol, une route est un OUVRAGE : elle passe par
         // -dessus et ne doit plus percer le sol sous elle, sinon un pont leve a +6 m laisse un
-        // trou beant a ses pieds. Le seuil est franchement au-dessus du denivele interne d'une
-        // tuile (chaussee a 0.024, trottoir a 0.296) et franchement en dessous d'une hauteur
-        // franchissable a pied : rien d'ambigu ne tombe entre les deux.
-        const float OverheadIgnore = 1.5f;
+        // trou beant a ses pieds.
+        //
+        // 4 m et pas 1,5 : en dessous, une route levee est un REMBLAI, le sol monte la chercher et
+        // il n'y a rien d'autre a faire. A 1,5 m, une rampe qui commence a peine a grimper etait
+        // deja declaree ouvrage : le sol l'ignorait, restait au niveau du terrain, et ressortait
+        // donc EN TRAVERS de la chaussee. La rupture existe toujours mais elle est desormais a
+        // 4 m de haut, ou elle se lit comme la culee d'un ouvrage -- ce qu'elle est.
+        //
+        // Doit rester en phase avec RoadNetwork.CapAbove, qui decide garde-corps et piles : une
+        // route sur remblai n'a ni l'un ni l'autre.
+        const float OverheadIgnore = 4f;
         // La grille fine ne couvre que le voisinage des routes ; au-dela le sol est plat et
         // 8 grands quads suffisent. Evite 300 000 cellules pour du vide.
         const float NearMargin = 40f;
@@ -63,6 +70,9 @@ namespace Gameplay.EditorTools
         // (0.63 avec la retombee) : le sol reste cache DANS l'epaisseur de la route.
         const float RoadSink = 0.06f;
         const float UnderSlope = 0.15f;
+        // Accotement plat autour de l'emprise, en metres. Doit depasser le pas de la grille, sinon
+        // un triangle a cheval sur le bord de la tuile passe par-dessus la chaussee.
+        const float Shoulder = 3f;
         // Distance maximale interrogee autour d'un point pour trouver une route. Elle borne le
         // COUT de la generation bien plus que sa justesse : une requete de proximite echantillonne
         // la spline, et la portee sert aussi de prefiltre. A 60 m, aucun segment n'etait ecarte et
@@ -351,10 +361,17 @@ namespace Gameplay.EditorTools
             // tuile, donc invisible.
             roadY -= RoadSink + Mathf.Max(0f, -best) * UnderSlope;
 
+            // Le sol reste cale sur la route jusqu'a `Shoulder` metres AU-DELA du bord de
+            // l'emprise. Sans cet accotement, la remontee vers le terrain commence pile au bord
+            // de la tuile : un triangle a cheval sur le bord relie alors un sommet cale sur la
+            // route a un sommet deja remonte, et sa face passe par-dessus la chaussee. La grille
+            // fait 2 m de pas, il faut donc plus que ca.
+            float over = Mathf.Max(0f, best - Shoulder);
+
             // Bande de raccord elargie avec le denivele : le talus garde une pente constante au
             // lieu de se raidir avec la profondeur du creux.
             float band = Mathf.Max(BlendBand, Mathf.Abs(roadY - y) / BlendSlope);
-            float t = 1f - Mathf.Clamp01(best / band);
+            float t = 1f - Mathf.Clamp01(over / band);
             return Mathf.Lerp(y, roadY, t * t * (3f - 2f * t));
         }
 

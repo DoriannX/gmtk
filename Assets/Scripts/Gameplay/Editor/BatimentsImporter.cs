@@ -89,8 +89,8 @@ namespace Gameplay.EditorTools
             // faite par Unity, et le parcours d'extraction devient dependant de la version.
             imp.preserveHierarchy = true;
 
-            // GrindRailBaker ignore les meshes non lisibles. C'est un jeu de skate : sans ca,
-            // Tools/Grind/Bake Rails saute silencieusement tous les rebords de toit peints.
+            // RoadMeshWarp et CityGroundBuilder lisent les vertices a la construction : un mesh
+            // non lisible les fait echouer en silence.
             imp.isReadable = true;
 
             imp.materialImportMode = ModelImporterMaterialImportMode.ImportStandard;

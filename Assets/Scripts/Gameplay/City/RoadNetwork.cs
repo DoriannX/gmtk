@@ -111,6 +111,7 @@ namespace Gameplay.City
         // retombee) et ne jamais laisser de jour.
         private const float PierBite = 0.05f;
         private const float MaxJunctionPier = 2.5f;   // cote max d'une pile de croisement
+        private const float GrindStep = 3f;           // pas d'echantillonnage d'une rambarde grindable
         // Au-dela, la route est un OUVRAGE : dessous ferme, garde-corps, piles, et le sol passe
         // dessous au lieu de monter la chercher. En dessous, c'est un REMBLAI. Doit rester en
         // phase avec CityGroundBuilder.OverheadIgnore.
@@ -844,6 +845,50 @@ namespace Gameplay.City
             if (!needsRebuild) return;
             needsRebuild = false;
             FullRebuild();
+            if (Application.isPlaying) DeclareGrindRails();
+        }
+
+        // Les rambardes d'ouvrage sont grindables. On les DECLARE au reseau de grind au lieu de
+        // les faire redecouvrir : on connait la spline et la largeur de tuile au millimetre, alors
+        // qu'un baker d'aretes doit deviner ce qui est une rambarde et ce qui est un joint de
+        // dallage. Meme mecanique que GrindRail, le rail pose a la main.
+        //
+        // En JEU seulement : en edition, la route se reconstruit a chaque frame de drag et le
+        // reseau se remplirait de doublons -- qui partiraient de surcroit dans la scene, la liste
+        // etant serialisee.
+        private void DeclareGrindRails()
+        {
+            if (parapetHeight <= 0.01f) return;
+            var net = FindAnyObjectByType<GrindRailNetwork>();
+            if (net == null) net = new GameObject("GrindRailNetwork").AddComponent<GrindRailNetwork>();
+
+            float top = SidewalkHeight + parapetHeight + SurfaceY;
+            float half = RoadHalfWidth;
+            for (int k = 0; k < segments.Count; k++)
+            {
+                if (!SegmentSpline(k, out Spline spline) || !IsOverpass(spline)) continue;
+
+                float len = spline.GetLength();
+                int n = Mathf.Clamp(Mathf.CeilToInt(len / GrindStep) + 1, 2, 256);
+                var left = new Vector3[n];
+                var right = new Vector3[n];
+                for (int i = 0; i < n; i++)
+                {
+                    float t = (float)i / (n - 1);
+                    spline.Evaluate(t, out float3 p, out float3 tan, out _);
+                    Vector3 fwd = ((Vector3)tan);
+                    fwd.y = 0f;
+                    // Repere a plat : la rambarde ne devers pas, la tuile reste plate en travers.
+                    Vector3 side = fwd.sqrMagnitude > 1e-8f
+                        ? Vector3.Cross(Vector3.up, fwd.normalized)
+                        : Vector3.right;
+                    Vector3 c = transform.TransformPoint((Vector3)p) + Vector3.up * top;
+                    left[i] = c - side * half;
+                    right[i] = c + side * half;
+                }
+                net.AddPath(left);
+                net.AddPath(right);
+            }
         }
 
         private void Reset()

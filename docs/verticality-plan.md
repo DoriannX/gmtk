@@ -5,7 +5,7 @@ tout ce qu'il faut pour en profiter (boost aérien, wall-ride, grind, rampes) et
 que rien dans la ville ne le lui demande aujourd'hui.
 
 Outils de référence : **la scène `road.unity`** (RoadNetwork + CityBrush +
-GrindRailBaker + CityGroundBuilder). `CityBuilder`/`CityGrid` sont hors sujet ici.
+CityGroundBuilder). `CityBuilder`/`CityGrid` sont hors sujet ici.
 
 ## Décisions (validées en interview)
 
@@ -32,10 +32,10 @@ GrindRailBaker + CityGroundBuilder). `CityBuilder`/`CityGrid` sont hors sujet ic
   transport parallèle *« pas de flip à 180 deg quand la tangente passe près de la
   verticale (rampes) »* ([RoadMeshWarp.cs:19](../Assets/Scripts/Gameplay/City/RoadMeshWarp.cs:19)).
   Une bretelle qui monte est une route comme une autre.
-- **Grind gratuit sur tout ce qu'on construit** — `GrindRailBaker` scanne tous les
-  meshes de la scène et extrait les rebords grindables jusqu'à ~45°
-  ([GrindRailBaker.cs:17](../Assets/Scripts/Gameplay/Editor/GrindRailBaker.cs:17)).
-  Un pont, une plateforme, un câble tendu : le bake les rend grindables sans code.
+- **Grind sur les ouvrages** — `RoadNetwork` déclare l'arête haute de ses rambardes
+  au `GrindRailNetwork` au démarrage. Rien à baker : on connaît la spline et la
+  largeur de tuile au millimètre. Les rails hors route se posent à la main
+  (`GrindRail`, prefab `Assets/Prefabs/GrindRail.prefab`).
 - **Props sur les toits** — `CityBrush` a déjà une couche qui saupoudre sur les
   bâtiments peints, toits compris.
 
@@ -89,18 +89,9 @@ Trois correctifs, tous à la racine :
 - `RoadNetworkEditor` : champ « hauteur » sur le nœud sélectionné + flèche verticale
   en scène, et le drag horizontal conserve la hauteur au lieu de rabattre l'ouvrage
   à la rue.
-- `GrindRailBaker` scannait via `FindObjectsByType`, **qui ignore les objets
-  `DontSave`** — c'est-à-dire toute la géométrie générée par `RoadNetwork`. Aucune
-  route, aucun pont, aucune rampe n'a jamais produit de rail, y compris dans
-  `road.unity`. Corrigé en descendant depuis les racines de scène.
-
-Piège découvert en corrigeant le baker : les **pointillés de la ligne blanche** (0,8 m
-de long) passaient tous les filtres et donnaient 234 rails en pleine chaussée sur une
-seule rue — la moto aurait grindé sur le marquage au sol. Le filtre par longueur
-d'arête ne peut pas les distinguer d'une bordure (la déformation de route découpe le
-trottoir tous les ~1 m) ; ce qui les sépare, c'est la longueur **une fois chaînée**.
-D'où `MinRail = 2.5 m` appliqué après chaînage. Résultat : 860 rails, 0 en chaussée,
-100 sur le pont, 50 sur la rampe, le plus long faisant 92 m.
+- Piège à retenir de l'époque du bake de grind, valable pour tout ce qui scanne la
+  scène : `FindObjectsByType` **ignore les objets `DontSave`**, c'est-à-dire toute la
+  géométrie générée par `RoadNetwork`. Il faut descendre depuis les racines de scène.
 
 **Quatrième correctif, trouvé en regardant le pont par en dessous** : les assets du kit
 sont des **coques ouvertes** — `SM_Tile_droit` n'a que 8 triangles orientés vers le bas
@@ -183,33 +174,24 @@ amplitude en voie toujours ≤ 14 mm sur tous les segments de l'ouvrage).
 **Piège d'atelier** : `Tools/Ville/Generer le sol` doit être relancé après avoir ajouté des
 nœuds, sinon le sol recouvre la nouvelle route et les mesures au raycast tapent le sol.
 
-## Le grind décrochait tous les 4 mètres
+## Le grind : abandon du bake d'arêtes
 
-Défaut **antérieur** à tout ce qui précède (169 rails dans la bande de bordure avant la
-découpe des tuiles, 164 après — la découpe n'y était pour rien).
+Le `GrindRailBaker` scannait tous les meshes de la scène et en extrayait les rebords.
+Supprimé. Ce qu'il aura coûté, en négatif, mérite d'être gardé : deviner ce qui est
+grindable à partir de la seule géométrie est un puits sans fond. Il a fallu un seuil de
+longueur (`MinRail`) pour écarter les pointillés du marquage au sol, un recollage à 35 cm
+pour recoudre les bordures que les **joints de dallage** du trottoir coupaient tous les
+3,86 m, puis un seuil de marche (`MinStep`) parce que le recollage ressuscitait les
+marquages peints du carrefour — et il restait quand même 399 rails parasites en travers du
+trottoir. Le tout à rebaker après chaque édition de route.
 
-Cause : le trottoir du kit est **dallé**, avec un joint transversal de 2 cm tous les 3,86 m.
-La bordure est donc géométriquement interrompue à chaque dalle, la soudure du baker ne fait
-qu'1 cm, et une rue de 70 m ressortait en 18 rails de 3,9 m. Le grind décrochait à chaque
-dalle.
+Les rails sont désormais **déclarés** : `RoadNetwork.DeclareGrindRails` pousse l'arête haute
+de ses rambardes d'ouvrage dans le `GrindRailNetwork` au démarrage (spline et largeur de
+tuile connues au millimètre), et `GrindRail` couvre tout le reste, posé à la main. Sur la
+scène de travail : 16 rails, 676 m, le plus long de 73,5 m.
 
-- `GrindRailBaker.Join` recolle deux rails dont les extrémités se touchent à 35 cm près, à
-  trois conditions d'alignement : les deux directions entre elles, **et chacune avec le
-  trou**. Cette dernière est ce qui empêche de coudre deux bordures parallèles voisines —
-  leur trou est perpendiculaire à leur direction. Le filtre `MinRail` passe désormais
-  **après** le recollage : un bout de 2 m isolé est du bruit, recollé il fait 70 m.
-- Le recollage a ressuscité les **marquages peints** du carrefour (6 rails de 2,5 m en
-  pleine chaussée). D'où `MinStep` : il faut une vraie marche sous l'arête. Le baker
-  calculait déjà `minRel`, la profondeur sous le rail — il ne s'en servait pas. Bordure
-  27 cm, peinture 2 cm, seuil à 6.
-
-Résultat : bordures de **57 à 77 m** d'un tenant (rail le plus long de la scène : 145 m),
-**0 rail en chaussée**, 58 sur le pont, 29 sur la rampe.
-
-Restent 399 rails transversaux de 4 m : les joints de dallage eux-mêmes, en travers du
-trottoir. Ils n'attrapent pas quand on roule le long de la rue (`grindAlign = 0.6` sur
-`ArcadeCarController` exige un cap ~parallèle), seulement si on traverse le trottoir. À
-supprimer si ça gêne — leur signature est d'avoir un jumeau parallèle à 2 cm.
+En jeu seulement — en édition la route se reconstruit à chaque frame de drag, et la liste du
+réseau est sérialisée : elle se remplirait de doublons qui partiraient dans la scène.
 
 `RoadMeshWarp.Subdivide` a par ailleurs été réécrit en **tranchage par plans** au lieu d'une
 bissection de l'arête la plus longue. C'était une fausse piste sur ce bug, mais la version

@@ -3,10 +3,16 @@ using UnityEngine;
 
 namespace Gameplay
 {
-    // Reseau de rails grindables BAKE (voir GrindRailBaker). Stocke des polylignes (chemins)
-    // en dur -> a l'execution, ZERO detection : on attache la moto au chemin le plus proche et
-    // on la fait glisser dessus par arc-length. C'est ca qui rend le grind robuste (chemin
-    // deterministe connu d'avance, contrairement a une detection par-frame qui saute).
+    // Reseau de rails grindables. Stocke des polylignes -> a l'execution, ZERO detection : on
+    // attache la moto au chemin le plus proche et on la fait glisser dessus par arc-length. C'est
+    // ca qui rend le grind robuste (chemin deterministe connu d'avance, contrairement a une
+    // detection par-frame qui saute).
+    //
+    // Deux sources, toutes deux DECLAREES et non devinees : les rails poses a la main (GrindRail)
+    // et les rambardes d'ouvrage (RoadNetwork, qui connait exactement ses splines). Il a existe un
+    // baker qui extrayait les aretes de tous les meshes de la scene : il rendait grindable un tas
+    // de choses qui n'avaient rien demande (marquages au sol, joints de dallage) et demandait un
+    // rebake apres chaque edition.
     //
     // Query spatiale via grille XZ (cheap meme avec des milliers de segments en ville).
     public class GrindRailNetwork : MonoBehaviour

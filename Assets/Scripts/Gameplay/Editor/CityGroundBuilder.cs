@@ -58,6 +58,12 @@ namespace Gameplay.EditorTools
         // Pente maximale de ce raccord. Une route enfoncee de 6 m rattrapee sur 8 m ferait un mur
         // a 37 deg ; la bande s'elargit donc avec le denivele pour que le talus reste roulable.
         const float BlendSlope = 0.5f;
+        // Distance maximale interrogee autour d'un point pour trouver une route. Elle borne le
+        // COUT de la generation bien plus que sa justesse : une requete de proximite echantillonne
+        // la spline, et la portee sert aussi de prefiltre. A 60 m, aucun segment n'etait ecarte et
+        // le sol mettait une seconde a se refaire. 30 m couvre le raccord le plus large qu'on
+        // fabrique (une tranchee de 15 m sous le terrain, talus a 0.5 de pente).
+        const float ProbeRange = 30f;
         // Le bord exterieur doit finir hors de vue : le brouillard ne le cache pas (sa couleur
         // est plus claire que le ciel juste au-dessus de l'horizon, l'arete se lit en vue
         // aerienne). Un quad de plus ne coute rien.
@@ -70,8 +76,14 @@ namespace Gameplay.EditorTools
         // `select` : la generation par le menu selectionne le sol produit, la generation
         // automatique apres une edition de route ne le fait surtout PAS -- elle volerait la
         // selection du noeud qu'on est en train de regler.
+        // Ecrire l'asset de mesh sur le disque coute ~100 ms sur 52 000 sommets. Le menu le fait,
+        // la generation automatique non : Unity ecrira de toute facon a la prochaine sauvegarde
+        // du projet, et le mesh est entierement regenerable en attendant.
+        static bool writeAsset = true;
+
         public static void Build(bool select)
         {
+            writeAsset = select;
             var nets = Object.FindObjectsByType<RoadNetwork>(FindObjectsSortMode.None);
 
             Bounds all, roads;
@@ -177,6 +189,19 @@ namespace Gameplay.EditorTools
             var index = new int[(cx + 1) * (cz + 1)];
             for (int i = 0; i < index.Length; i++) index[i] = -1;
 
+            // Cordes des segments, en XZ. Elles servent de PREFILTRE aux requetes de proximite :
+            // une requete echantillonne la spline et coute ~30 us, la distance a un bout de
+            // droite coute quelques nanosecondes. Sans ce filtre, la grille fine couvrant tout le
+            // relief, on payait le prix fort sur des dizaines de milliers de sommets qui n'ont
+            // aucune route a moins de 200 m.
+            //
+            // La corde suffit : depuis que les points intermediaires de suivi du relief sont
+            // interpoles en XZ, une spline ne s'ecarte de sa corde que par la courbure des
+            // raccords aux croisements -- d'ou la marge.
+            var chords = Chords(nets);
+            float reach = ProbeRange + MaxHalfWidth(nets) + ChordSlack;
+            float reach2 = reach * reach;
+
             // Hauteur et garde routiere sont calculees dans la MEME passe : les deux sortent de
             // la meme requete de proximite, et les recalculer separement doublerait le cout du
             // poste le plus lourd de la generation.
@@ -187,7 +212,7 @@ namespace Gameplay.EditorTools
                 {
                     var p = new Vector3(nx0 + i * Cell, y, nz0 + j * Cell);
                     int k = j * (cx + 1) + i;
-                    height[k] = Sample(nets, terrain, y, p, out free[k]);
+                    height[k] = Sample(nets, terrain, y, p, chords, reach2, out free[k]);
                 }
 
             for (int j = 0; j < cz; j++)
@@ -246,17 +271,31 @@ namespace Gameplay.EditorTools
             return index[key];
         }
 
+        // L'anneau exterieur est plat, donc un seul quad suffirait au rendu -- mais PhysX refuse
+        // les triangles de plus de 500 unites ("The resulting Triangle Mesh can impact simulation
+        // and query stability") et le crie a chaque cuisson du collider. On le decoupe donc en
+        // dalles, assez grandes pour ne rien couter et assez petites pour tenir sous le seuil.
+        const float SlabMax = 200f;
+
         static void Strip(List<Vector3> verts, List<int> tris, float y,
                           float x0, float z0, float x1, float z1)
         {
             if (x1 - x0 < 0.01f || z1 - z0 < 0.01f) return;
-            int b = verts.Count;
-            verts.Add(new Vector3(x0, y, z0));
-            verts.Add(new Vector3(x1, y, z0));
-            verts.Add(new Vector3(x0, y, z1));
-            verts.Add(new Vector3(x1, y, z1));
-            tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
-            tris.Add(b + 1); tris.Add(b + 2); tris.Add(b + 3);
+            int nx = Mathf.Max(1, Mathf.CeilToInt((x1 - x0) / SlabMax));
+            int nz = Mathf.Max(1, Mathf.CeilToInt((z1 - z0) / SlabMax));
+            for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                {
+                    float ax = Mathf.Lerp(x0, x1, (float)i / nx), bx = Mathf.Lerp(x0, x1, (float)(i + 1) / nx);
+                    float az = Mathf.Lerp(z0, z1, (float)j / nz), bz = Mathf.Lerp(z0, z1, (float)(j + 1) / nz);
+                    int b = verts.Count;
+                    verts.Add(new Vector3(ax, y, az));
+                    verts.Add(new Vector3(bx, y, az));
+                    verts.Add(new Vector3(ax, y, bz));
+                    verts.Add(new Vector3(bx, y, bz));
+                    tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                    tris.Add(b + 1); tris.Add(b + 2); tris.Add(b + 3);
+                }
         }
 
         // Hauteur du sol en un point, et au passage : la cellule est-elle hors emprise routiere ?
@@ -271,9 +310,12 @@ namespace Gameplay.EditorTools
         // reste au niveau du terrain et passe dessous. C'est ce qui distingue le pont du creux, et
         // c'est le meme seuil qui empeche deja le pont de percer le sol a ses pieds.
         static float Sample(RoadNetwork[] nets, CityTerrain terrain, float baseY, Vector3 p,
-                            out bool free)
+                            Vector4[] chords, float reach2, out bool free)
         {
             float y = baseY + (terrain != null ? terrain.Height(p.x, p.z) - terrain.transform.position.y : 0f);
+
+            free = true;
+            if (!NearAnyChord(chords, p.x, p.z, reach2)) return y;
 
             // La requete part de la hauteur du TERRAIN : c'est elle qui decide ce qui est un
             // ouvrage au-dessus de nous. Faite depuis y = 0, un pont sur une butte de 6 m
@@ -283,7 +325,7 @@ namespace Gameplay.EditorTools
             foreach (var net in nets)
             {
                 RoadNetwork.RoadProbe probe;
-                if (!net.ProbeRoad(q, 60f, out probe, OverheadIgnore)) continue;
+                if (!net.ProbeRoad(q, ProbeRange, out probe, OverheadIgnore)) continue;
                 if (probe.clearance >= best) continue;
                 best = probe.clearance;
                 roadY = probe.point.y + net.SidewalkHeight;
@@ -297,6 +339,47 @@ namespace Gameplay.EditorTools
             float band = Mathf.Max(BlendBand, Mathf.Abs(roadY - y) / BlendSlope);
             float t = 1f - Mathf.Clamp01(best / band);
             return Mathf.Lerp(y, roadY, t * t * (3f - 2f * t));
+        }
+
+        // Marge sur la corde : une spline s'en ecarte par la courbure de ses raccords.
+        const float ChordSlack = 12f;
+
+        // (x0, z0, x1, z1) par segment, tous reseaux confondus.
+        static Vector4[] Chords(RoadNetwork[] nets)
+        {
+            var list = new List<Vector4>();
+            foreach (var net in nets)
+                for (int k = 0; k < net.SegmentCount; k++)
+                {
+                    var s = net.SegmentAt(k);
+                    Vector3 a = net.NodeWorld(s.a), b = net.NodeWorld(s.b);
+                    list.Add(new Vector4(a.x, a.z, b.x, b.z));
+                }
+            return list.ToArray();
+        }
+
+        static float MaxHalfWidth(RoadNetwork[] nets)
+        {
+            float w = 0f;
+            foreach (var net in nets) w = Mathf.Max(w, net.RoadHalfWidth);
+            return w;
+        }
+
+        // Distance au carre point-segment en XZ, comparee a la portee. Sort des que c'est proche :
+        // sur un reseau dense, la plupart des points tombent tot.
+        static bool NearAnyChord(Vector4[] chords, float x, float z, float reach2)
+        {
+            for (int i = 0; i < chords.Length; i++)
+            {
+                Vector4 c = chords[i];
+                float ex = c.z - c.x, ez = c.w - c.y;
+                float px = x - c.x, pz = z - c.y;
+                float len2 = ex * ex + ez * ez;
+                float t = len2 > 1e-6f ? Mathf.Clamp01((px * ex + pz * ez) / len2) : 0f;
+                float dx = px - ex * t, dz = pz - ez * t;
+                if (dx * dx + dz * dz <= reach2) return true;
+            }
+            return false;
         }
 
         // ---------------------------------------------------------------- emprises
@@ -365,7 +448,7 @@ namespace Gameplay.EditorTools
                 existing.RecalculateBounds();
                 Object.DestroyImmediate(mesh);
                 EditorUtility.SetDirty(existing);
-                AssetDatabase.SaveAssets();
+                if (writeAsset) AssetDatabase.SaveAssets();
                 return existing;
             }
             AssetDatabase.CreateAsset(mesh, path);

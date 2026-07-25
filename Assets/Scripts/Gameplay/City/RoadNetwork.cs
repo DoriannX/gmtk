@@ -108,7 +108,10 @@ namespace Gameplay.City
         private const float CapAbove = 1.5f;      // au-dela, le croisement est un OUVRAGE : on ferme son dessous
         private const HideFlags GenFlags = HideFlags.DontSave | HideFlags.NotEditable;
         private const float MinSegment = 2f;      // bras plus proches que ca -> segment saute
-        private const float TerrainKnotEvery = 12f;  // pas des points de suivi du relief, en m
+        // Pas des points de suivi du relief, en metres. Chaque point de plus alourdit TOUTES les
+        // requetes de proximite (elles echantillonnent la spline), et le sol en fait des dizaines
+        // de milliers : 16 m suffit face a des collines de 90 m.
+        private const float TerrainKnotEvery = 16f;
         private const float SharpLimit = -0.25f;  // cos de l'angle max entre corde et tangente (~105 deg)
         private const float BadFitDeg = 35f;      // ecart-type angulaire au-dela -> gizmo rouge
         private const float MinBranchGap = 10f;   // deux branches plus serrees que ca -> gizmo rouge
@@ -136,6 +139,7 @@ namespace Gameplay.City
         // SceneView et SegmentSpline alloue une Spline + 2 BezierKnot par appel. Invalide en
         // tete de ComputeJunctions, reconstruit paresseusement.
         [System.NonSerialized] private Spline[] splineCache;
+        [System.NonSerialized] private Vector3[][] polyCache;   // axe echantillonne, LOCAL
         [System.NonSerialized] private float[] splineLenCache;
         [System.NonSerialized] private Bounds[] splineBoxCache;   // emprise XZ locale, prefiltre
 
@@ -235,17 +239,23 @@ namespace Gameplay.City
         {
             if (terrain == null) return false;
             float baseY = terrain.transform.position.y;
+            bool moved = !liftCaptured;
             for (int i = 0; i < nodes.Count; i++)
             {
                 var n = nodes[i];
                 Vector3 w = transform.TransformPoint(n.pos);
                 if (!liftCaptured) n.lift = w.y - baseY;
                 w.y = terrain.Height(w.x, w.z) + n.lift;
-                n.pos = transform.InverseTransformPoint(w);
+                Vector3 p = transform.InverseTransformPoint(w);
+                if ((p - n.pos).sqrMagnitude > 1e-8f) moved = true;
+                n.pos = p;
             }
             liftCaptured = true;
-            FullRebuild();
-            return true;
+            // Reconstruire seulement si un noeud a REELLEMENT bouge. Cette methode est appelee a
+            // chaque generation du sol, or les hauteurs sont stables la plupart du temps : sans
+            // ce test, chaque retouche de route reconstruisait tout le reseau pour rien.
+            if (moved) FullRebuild();
+            return moved;
         }
 
         // Deplacement : on ne reconstruit que le 2-ANNEAU. Bouger i change les directions de
@@ -490,8 +500,7 @@ namespace Gameplay.City
                 box.Expand(new Vector3(reach * 2f, 0f, reach * 2f));
                 if (!box.Contains(new Vector3(local.x, 0f, local.z))) continue;
 
-                SplineUtility.GetNearestPoint(spline, (float3)local, out float3 near, out float t);
-                Vector3 n = (Vector3)near;
+                NearestOnPoly(polyCache[k], flatXZ, out Vector3 n, out float t);
                 if (n.y - local.y > maxHeightAbove) continue;   // ouvrage : passe au-dessus
                 float d = Vector2.Distance(flatXZ, new Vector2(n.x, n.z));
                 if (d - half >= bestClear) continue;
@@ -563,6 +572,33 @@ namespace Gameplay.City
             return true;
         }
 
+        private const float PolyStep = 2f;   // pas d'echantillonnage de l'axe, en metres
+
+        // Point de la polyligne le plus proche, en XZ. La hauteur est interpolee : c'est elle qui
+        // dit si la route passe AU-DESSUS du point interroge (ouvrage).
+        private static void NearestOnPoly(Vector3[] poly, Vector2 q, out Vector3 near, out float t)
+        {
+            near = poly[0];
+            t = 0f;
+            float best = float.MaxValue;
+            for (int i = 0; i + 1 < poly.Length; i++)
+            {
+                Vector3 a = poly[i], b = poly[i + 1];
+                float ex = b.x - a.x, ez = b.z - a.z;
+                float len2 = ex * ex + ez * ez;
+                float u = len2 > 1e-8f
+                    ? Mathf.Clamp01(((q.x - a.x) * ex + (q.y - a.z) * ez) / len2)
+                    : 0f;
+                float px = a.x + ex * u, pz = a.z + ez * u;
+                float dx = q.x - px, dz = q.y - pz;
+                float d2 = dx * dx + dz * dz;
+                if (d2 >= best) continue;
+                best = d2;
+                near = new Vector3(px, Mathf.Lerp(a.y, b.y, u), pz);
+                t = (i + u) / (poly.Length - 1);
+            }
+        }
+
         private void EnsureSplines()
         {
             if (splineCache != null && splineCache.Length == segments.Count) return;
@@ -573,17 +609,34 @@ namespace Gameplay.City
             splineCache = new Spline[segments.Count];
             splineLenCache = new float[segments.Count];
             splineBoxCache = new Bounds[segments.Count];
+            polyCache = new Vector3[segments.Count][];
 
             for (int k = 0; k < segments.Count; k++)
             {
                 if (!SegmentSpline(k, out Spline spline)) continue;
                 splineCache[k] = spline;
-                splineLenCache[k] = spline.GetLength();
+                float len = spline.GetLength();
+                splineLenCache[k] = len;
+
+                // Axe echantillonne une fois pour toutes. Les requetes de proximite cherchent
+                // dessus au lieu d'appeler SplineUtility.GetNearestPoint : celui-ci reechantillonne
+                // la courbe a CHAQUE appel, ce qui coutait 134 us par requete depuis que le suivi
+                // du relief ajoute des noeuds intermediaires -- et le sol en fait des milliers.
+                int n = Mathf.Clamp(Mathf.CeilToInt(len / PolyStep) + 1, 2, 512);
+                var poly = new Vector3[n];
+                for (int i = 0; i < n; i++)
+                {
+                    spline.Evaluate((float)i / (n - 1), out float3 sp, out float3 _, out float3 _3);
+                    poly[i] = (Vector3)sp;
+                }
+                polyCache[k] = poly;
 
                 // Emprise XZ de la corde, gonflee de la fleche maximale de la Bezier
                 // (majoree par curvature * |corde|) -> le prefiltre ne peut pas rater un point.
+                // DERNIER knot et pas `spline[1]` : depuis le suivi du relief, le knot 1 est un
+                // point intermediaire et l'emprise ne couvrait plus que le debut du segment.
                 Vector3 p0 = (Vector3)spline[0].Position;
-                Vector3 p1 = (Vector3)spline[1].Position;
+                Vector3 p1 = (Vector3)spline[spline.Count - 1].Position;
                 var box = new Bounds(new Vector3((p0.x + p1.x) * 0.5f, 0f, (p0.z + p1.z) * 0.5f),
                                      new Vector3(Mathf.Abs(p1.x - p0.x), 0f, Mathf.Abs(p1.z - p0.z)));
                 float sag = curvature * Vector3.Distance(p0, p1);
@@ -1370,7 +1423,11 @@ namespace Gameplay.City
             foreach (var mf in t.GetComponentsInChildren<MeshFilter>(true))
             {
                 var m = mf.sharedMesh;
-                if (m != null && (m.hideFlags & HideFlags.DontSave) != 0) DestroyImmediate(m);
+                // Egalite EXACTE et pas un test de bit : les meshes integres de Unity (le cube
+                // des piles) portent HideAndDontSave, donc DontSave parmi d'autres drapeaux, et
+                // les detruire est refuse -- "Destroying assets is not permitted". Nos meshes a
+                // nous portent DontSave et rien d'autre.
+                if (m != null && m.hideFlags == HideFlags.DontSave) DestroyImmediate(m);
             }
         }
 

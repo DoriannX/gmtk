@@ -528,7 +528,7 @@ namespace Gameplay.EditorTools
         // frame de drag. Chaque edition repousse l'echeance, donc un drag ne declenche qu'UNE
         // reconstruction, a la fin.
         private const string AutoKey = "gmtk.ville.solAuto";
-        private const double Debounce = 0.35;
+        private const double Debounce = 0.6;
         private static double groundDue;
         private static bool hooked;
 
@@ -550,8 +550,16 @@ namespace Gameplay.EditorTools
         private static void PumpGround()
         {
             if (groundDue <= 0d || EditorApplication.timeSinceStartup < groundDue) return;
+            if (EditorApplication.isPlayingOrWillChangePlaymode) { groundDue = 0d; return; }
+            // Poignee encore tenue : on repousse au lieu d'annuler. Un drag lent envoie des
+            // MarkDirty espaces de plus que le debounce, et reconstruire le sol au milieu du
+            // geste fait sauter la souris -- c'est ce qui donnait la sensation de lag.
+            if (GUIUtility.hotControl != 0)
+            {
+                groundDue = EditorApplication.timeSinceStartup + Debounce;
+                return;
+            }
             groundDue = 0d;
-            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
             CityGroundBuilder.Build(false);
         }
     }

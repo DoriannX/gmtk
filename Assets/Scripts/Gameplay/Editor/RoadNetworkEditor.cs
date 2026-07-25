@@ -67,11 +67,17 @@ namespace Gameplay.EditorTools
         {
             Undo.undoRedoPerformed += OnUndoRedo;
             EditorApplication.delayCall += () => EnsureReadable(target as RoadNetwork, false);
+            // La poignee de transform de Unity vise le GameObject "Roads", pas les noeuds : elle
+            // se superpose a la notre, et on deplace le reseau entier en croyant deplacer un
+            // point. On la masque tant que l'outil est actif. L'outil Rotate reste utile, il est
+            // relu plus bas pour sortir les disques de yaw.
+            Tools.hidden = true;
         }
 
         private void OnDisable()
         {
             Undo.undoRedoPerformed -= OnUndoRedo;
+            Tools.hidden = false;
         }
 
         private void OnUndoRedo()
@@ -194,6 +200,11 @@ namespace Gameplay.EditorTools
             HandlePlainClick(net, e);
             HandleKeys(net, e);
             DrawNodes(net, e);
+            // APRES les poignees, et c'est tout l'interet : ce rattrapage fait e.Use(), donc mis
+            // avant il volait le clic aux fleches de la poignee XYZ -- elles tombent a une
+            // poignee de distance du noeud, souvent pile au-dessus d'une route, et le noeud
+            // devenait impossible a deplacer.
+            HandleRoadClick(net, e);
             DrawPendingLink(net, e);
         }
 
@@ -212,14 +223,22 @@ namespace Gameplay.EditorTools
             if (e.shift || e.alt || e.control) return;
 
             int hit = PickNode(net, e.mousePosition);
-            if (hit >= 0)
-            {
-                // Pas de e.Use() : la poignee dessinee juste apres doit pouvoir prendre le drag
-                // dans le meme evenement, sinon il faut cliquer deux fois pour bouger un noeud.
-                selected = hit;
-                Repaint();
-                return;
-            }
+            if (hit < 0) return;
+
+            // Pas de e.Use() : la poignee dessinee juste apres doit pouvoir prendre le drag dans
+            // le meme evenement, sinon il faut cliquer deux fois pour bouger un noeud.
+            selected = hit;
+            Repaint();
+        }
+
+        // Clic sur un pan de route : selectionne le noeud le plus proche plutot que de laisser
+        // Unity attraper le `Seg_k` genere -- un segment est derive, il n'y a rien a y regler.
+        private void HandleRoadClick(RoadNetwork net, Event e)
+        {
+            if (e.type != EventType.MouseDown || e.button != 0) return;
+            if (e.shift || e.alt || e.control) return;
+            // Une poignee a deja pris le clic : c'est un deplacement, pas une selection.
+            if (GUIUtility.hotControl != 0) return;
 
             Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
             int seg = net.NearestSegment(ray, out Vector3 onAxis);
@@ -233,7 +252,7 @@ namespace Gameplay.EditorTools
             selected = da <= db ? s.a : s.b;
             Repaint();
             SceneView.RepaintAll();
-            e.Use();   // ici oui : sinon Unity selectionne le Seg_k sous le curseur
+            e.Use();
         }
 
         private void HandleKeys(RoadNetwork net, Event e)

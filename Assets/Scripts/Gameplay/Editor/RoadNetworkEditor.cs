@@ -405,7 +405,11 @@ namespace Gameplay.EditorTools
                 PickHandle(net, i, p, handle);
             }
 
-            if (draggingNode && (e.type == EventType.MouseUp || e.rawType == EventType.MouseUp))
+            // `net.Dragging` en plus de notre propre drapeau : un bouton relache hors de la vue
+            // scene ne nous envoie pas de MouseUp, le reseau restait en mode drag et donc sans
+            // colliders ni piles jusqu'a un "Tout reconstruire".
+            if ((draggingNode || net.Dragging)
+                && (e.type == EventType.MouseUp || e.rawType == EventType.MouseUp))
             {
                 draggingNode = false;
                 net.EndDrag();       // pose les MeshCollider differes pendant le drag

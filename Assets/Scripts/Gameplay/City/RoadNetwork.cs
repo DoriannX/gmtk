@@ -105,6 +105,7 @@ namespace Gameplay.City
         private const string ContainerName = "Generated";
         private const string CapName = "Dessous";
         private const string PierName = "Pile_";
+        private const string JunctionPier = "PileJct_";
         private const float CapAbove = 1.5f;      // au-dela, le croisement est un OUVRAGE : on ferme son dessous
         private const HideFlags GenFlags = HideFlags.DontSave | HideFlags.NotEditable;
         private const float MinSegment = 2f;      // bras plus proches que ca -> segment saute
@@ -359,10 +360,62 @@ namespace Gameplay.City
 
         public void BeginDrag() { dragging = true; }
 
+        // L'editeur s'en sert pour rattraper un drapeau reste leve : si le bouton est relache
+        // hors de la vue scene, le MouseUp ne nous parvient jamais et le reseau reste en mode
+        // drag -- donc sans colliders ni piles, indefiniment.
+        public bool Dragging => dragging;
+
         public void EndDrag()
         {
             dragging = false;
             ApplyMissingColliders();
+            // Les piles sont sautees pendant le drag (creer et detruire des cubes a chaque frame
+            // n'a pas de sens) : sans ce rattrapage, lever un noeud en tirant la poignee donnait
+            // un pont sans piles jusqu'au prochain "Tout reconstruire".
+            RebuildPiers();
+        }
+
+        // Repose toutes les piles, sans toucher aux meshes. Passe separee et pas un bout de
+        // BuildSegment : pendant un drag les piles sont sautees (creer et detruire des cubes a
+        // chaque frame n'a pas de sens), il faut donc un endroit qui rattrape a la fin.
+        private void RebuildPiers()
+        {
+            Transform root = transform.Find(ContainerName);
+            if (root == null || dragging) return;
+
+            var deck = new RoadMeshWarp.Deck { fascia = Mathf.Max(0f, deckFascia) };
+            for (int k = 0; k < segments.Count; k++)
+            {
+                Transform seg = root.Find("Seg_" + k);
+                if (seg == null || !SegmentSpline(k, out Spline spline)) continue;
+                BuildPiers(seg, spline, deck);
+            }
+
+            // Pile sous un CROISEMENT pose en l'air. Ses quatre branches sont portees par leurs
+            // propres piles, mais lui flottait : c'est le cas d'un carrefour leve pour croiser
+            // deux ouvrages. Plus large qu'une pile de segment, a la mesure de son emprise.
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                Transform old = root.Find(JunctionPier + i);
+                if (old != null) DestroyImmediate(old.gameObject);
+                if (pierEvery < 1f || NodeLift(i) <= CapAbove) continue;
+
+                Vector3 w = NodeWorld(i);
+                float ground = GroundUnder(w);
+                float top = w.y + tile.bottom - deck.fascia + SurfaceY;
+                float h = top - ground;
+                if (h < 1f) continue;
+
+                float side = Mathf.Max(pierSize, JunctionRadius(i) * 0.5f);
+                var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                pier.name = JunctionPier + i;
+                pier.hideFlags = GenFlags;
+                pier.GetComponent<MeshRenderer>().sharedMaterial = RoadMat();
+                pier.transform.SetParent(root, false);
+                pier.transform.position = new Vector3(w.x, ground + h * 0.5f, w.z);
+                pier.transform.rotation = Quaternion.Euler(0f, nodes[i].yaw, 0f);
+                pier.transform.localScale = new Vector3(side, h, side);
+            }
         }
 
         // ---------------------------------------------------------------- API pinceau
@@ -711,6 +764,7 @@ namespace Gameplay.City
 
             for (int i = 0; i < nodes.Count; i++) BuildJunction(root, i);
             for (int k = 0; k < segments.Count; k++) BuildSegment(root, k);
+            RebuildPiers();   // les piles de croisement ne dependent d'aucun segment
         }
 
         // Reconstruit uniquement les meshes marques sales. Les croisements sont TOUS recalcules
@@ -731,6 +785,7 @@ namespace Gameplay.City
             foreach (int k in dirtySegments) BuildSegment(root, k);
             dirtyNodes.Clear();
             dirtySegments.Clear();
+            RebuildPiers();   // sans effet pendant un drag, EndDrag repasse derriere
         }
 
         private void MarkDirty(int node)
@@ -1065,7 +1120,9 @@ namespace Gameplay.City
             // Les assets du kit sont des coques ouvertes (SM_Dead_end : 10 triangles vers le bas
             // sur 184). Au sol ca ne se voit pas ; en l'air -- une impasse qui coiffe une rampe
             // de saut, un croisement sur tablier -- on voit le marquage au sol par en dessous.
-            bool needCap = nodes[i].pos.y > CapAbove;
+            // Hauteur AU-DESSUS DU RELIEF et pas absolue : un carrefour pose sur une butte de 6 m
+            // n'est pas un ouvrage, il n'a rien a fermer par en dessous.
+            bool needCap = NodeLift(i) > CapAbove;
             bool hasCap = existing != null && existing.Find(CapName) != null;
 
             // Meme asset qu'avant (cas du drag) : on ne touche que le transform.

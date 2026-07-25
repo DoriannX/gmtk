@@ -14,7 +14,6 @@ namespace Gameplay
     {
         [SerializeField] private QuestZone pickup;
         [SerializeField] private QuestZone dropoff;
-        [SerializeField] private QuestArrow arrow;
         [SerializeField] private float hideDelay = 1.2f;   // laisse voir le "OK !" avant de ranger la zone
         [SerializeField] private int pickupReward = 60;    // points au retrait
         [SerializeField] private int deliveryReward = 320; // points a la livraison
@@ -35,7 +34,8 @@ namespace Gameplay
         // pointe encore sur notre depot. Sinon une quete effacerait le guidage d'une autre.
         private void ReleaseArrow()
         {
-            if (arrow != null && arrow.Target == dropoff) arrow.SetTarget(null);
+            var arrow = QuestArrow.Instance;   // spawnee a la demande, rien a brancher en scene
+            if (arrow.Target == dropoff) arrow.SetTarget(null);
         }
 
         private void OnEnable()
@@ -104,7 +104,7 @@ namespace Gameplay
             HasPackage = true;
 
             dropoff.gameObject.SetActive(true);   // la zone de livraison jaillit (pop dans QuestZone)
-            arrow.SetTarget(dropoff);
+            QuestArrow.Instance.SetTarget(dropoff);
             Retire(pickup);
             RefreshBlocks();          // les autres points se ferment
             Award("COLIS PRIS", pickupReward);

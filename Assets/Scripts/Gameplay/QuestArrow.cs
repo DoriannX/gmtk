@@ -33,8 +33,24 @@ namespace Gameplay
         private bool shown = true;
         private Tween showTween;
 
+        // UNE seule fleche pour toute la partie, spawnee depuis Resources/QuestArrow.prefab :
+        // aucune scene n'a besoin d'en poser une, et une quete en prefab n'a rien a brancher.
+        // Une fleche deja posee en scene s'inscrit toute seule dans OnEnable et sert d'instance.
+        private static QuestArrow instance;
+
+        public static QuestArrow Instance
+        {
+            get
+            {
+                if (instance == null)
+                    instance = Instantiate(Resources.Load<GameObject>("QuestArrow")).GetComponent<QuestArrow>();
+                return instance;
+            }
+        }
+
         private void OnEnable()
         {
+            if (instance == null) instance = this;
             GetComponent<MeshFilter>().sharedMesh = BuildMesh();
             if (follow == null)
             {
@@ -43,6 +59,11 @@ namespace Gameplay
             }
             if (target == null && autoFindTarget) target = FindAnyObjectByType<QuestZone>();
             ApplyVisibility(true);   // pas de tween au demarrage : on est deja a la bonne taille
+        }
+
+        private void OnDisable()
+        {
+            if (instance == this) instance = null;
         }
 
         public QuestZone Target => target;

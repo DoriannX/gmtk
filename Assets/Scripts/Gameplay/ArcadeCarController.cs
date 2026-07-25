@@ -109,6 +109,7 @@ namespace Gameplay
         [Header("Visuel cartoon")]
         [SerializeField] private Transform visualBody; // child cosmetique, tilte sans toucher la physique
         [SerializeField] private Transform wheelVisual; // roue unique, tourne selon la vitesse
+        [SerializeField] private Transform[] wheelExtraParts; // autres morceaux de la roue (jante, pneu...) : reparentes sous wheelVisual au reveil
         [SerializeField] private float wheelRadius = 0.51f;
         [SerializeField] private float wheelVisualDroop = 0.35f; // debattement VISUEL de la mono-roue deco (cosmetique, sans physique)
         [SerializeField] private float maxRollAngle = 18f; // roulis dans les virages
@@ -285,6 +286,11 @@ namespace Gameplay
                 wheelVisual.SetParent(transform, true); // garde la transform monde (roue = petite-fille de Body)
             if (wheelVisual != null)
             {
+                // Le modele decoupe la roue en plusieurs meshes (pneu, jante, moyeu...) : on les
+                // colle sous wheelVisual pour qu'ils suivent spin + droop sans code en plus.
+                if (wheelExtraParts != null)
+                    foreach (Transform part in wheelExtraParts)
+                        if (part != null && part != wheelVisual) part.SetParent(wheelVisual, true);
                 wheelRestLocalRot = wheelVisual.localRotation;
                 wheelRestLocalPos = wheelVisual.localPosition; // capture dans le nouveau parent (root)
                 wheelSpinAxisLocal = wheelVisual.InverseTransformDirection(transform.right);

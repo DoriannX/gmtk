@@ -19726,8 +19726,6 @@ MonoBehaviour:
   jumpVelocity: 7
   superJumpVelocity: 13
   jumpChargeMax: 1
-  superJumpChargeTime: 0.45
-  superSpinDegrees: 360
   superSpinSpeed: 540
   coyoteTime: 0.12
   stretchOnJump: 1.35
@@ -19746,11 +19744,34 @@ MonoBehaviour:
   airFlipSpeed: 280
   airLevelSpeed: 220
   landAlignDist: 1.6500001
+  railNet: {fileID: 0}
+  grindMinSpeed: 4
+  grindEnterSpeed: 0.8
+  grindGrab: 0.5
+  grindAlign: 0.6
+  grindRideHeight: 0
+  grindThrottle: 30
+  grindLean: 18
+  grindYawPose: 25
+  grindVisualLean: 22
+  grindGravity: 1
+  grindJump: 8
+  grindInstability: 7
+  grindBalanceControl: 30
+  grindBalanceDamp: 0.8
+  grindFallThreshold: 2.2
+  grindBalanceLean: 30
+  grindEject: 4
   drawDebugGizmos: 1
   fallMultiplier: 1.8
   visualBody: {fileID: 1568982032177944136}
-  wheelVisual: {fileID: 4208214639633750012}
-  wheelRadius: 0.43
+  wheelVisual: {fileID: 2253804530108483165}
+  wheelExtraParts:
+  - {fileID: 3396265988423579904}
+  - {fileID: 8045940461584999172}
+  - {fileID: 1863809705556793775}
+  - {fileID: 8334331694801128110}
+  wheelRadius: 0.39
   wheelVisualDroop: 0.1925
   maxRollAngle: 18
   maxPitchAngle: 6
@@ -19830,6 +19851,8 @@ MonoBehaviour:
   spinPts: 200
   flipPts: 400
   bigAirPtsPerSec: 260
+  grindPtsPerMeter: 8
+  grindMinDist: 2
 --- !u!1 &6504966084657589246
 GameObject:
   m_ObjectHideFlags: 0
@@ -24735,13 +24758,33 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+--- !u!4 &1863809705556793775 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -9122526896862146736, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+  m_PrefabInstance: {fileID: 1782250159304251135}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &2247694712943931668 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
   m_PrefabInstance: {fileID: 1782250159304251135}
   m_PrefabAsset: {fileID: 0}
---- !u!4 &4208214639633750012 stripped
+--- !u!4 &2253804530108483165 stripped
 Transform:
-  m_CorrespondingSourceObject: {fileID: 2512243300098982147, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+  m_CorrespondingSourceObject: {fileID: 575559517110980770, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+  m_PrefabInstance: {fileID: 1782250159304251135}
+  m_PrefabAsset: {fileID: 0}
+--- !u!4 &3396265988423579904 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4006557697918693375, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+  m_PrefabInstance: {fileID: 1782250159304251135}
+  m_PrefabAsset: {fileID: 0}
+--- !u!4 &8045940461584999172 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -643100864537299461, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
+  m_PrefabInstance: {fileID: 1782250159304251135}
+  m_PrefabAsset: {fileID: 0}
+--- !u!4 &8334331694801128110 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -1507952059774657455, guid: 3eea4b9ba5d7fe845bd780330ae71111, type: 3}
   m_PrefabInstance: {fileID: 1782250159304251135}
   m_PrefabAsset: {fileID: 0}

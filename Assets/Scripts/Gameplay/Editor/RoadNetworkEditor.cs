@@ -163,6 +163,12 @@ namespace Gameplay.EditorTools
             if (GUILayout.Button("Tout reconstruire")) net.FullRebuild();
             if (GUILayout.Button("Activer Read/Write sur les FBX")) EnsureReadable(net, true);
             EditorGUILayout.EndHorizontal();
+
+            AutoGround = EditorGUILayout.ToggleLeft(
+                new GUIContent("Refaire le sol automatiquement",
+                               "Le sol se regenere ~0,3 s apres chaque edition de route. " +
+                               "A decocher sur une grosse ville si la reconstruction se sent."),
+                AutoGround);
         }
 
         // ---------------------------------------------------------------- scene
@@ -406,6 +412,46 @@ namespace Gameplay.EditorTools
         {
             EditorUtility.SetDirty(net);
             EditorSceneManager.MarkSceneDirty(net.gameObject.scene);
+            QueueGround();
+        }
+
+        // ---------------------------------------------------------------- sol automatique
+        //
+        // Le sol est CALE sur les routes : trou sous la chaussee, creux sous une route enfoncee,
+        // remblai sous une route levee. Le laisser perime jusqu'au prochain clic de menu donne
+        // une ville fausse a chaque retouche -- c'est justement quand on deplace une route qu'on
+        // a besoin de voir le sol suivre.
+        //
+        // Il est DIFFERE et pas immediat : sa reconstruction coute une centaine de millisecondes
+        // (52 000 sommets, plus la cuisson du MeshCollider), et MarkDirty est appele a chaque
+        // frame de drag. Chaque edition repousse l'echeance, donc un drag ne declenche qu'UNE
+        // reconstruction, a la fin.
+        private const string AutoKey = "gmtk.ville.solAuto";
+        private const double Debounce = 0.35;
+        private static double groundDue;
+        private static bool hooked;
+
+        public static bool AutoGround
+        {
+            get { return EditorPrefs.GetBool(AutoKey, true); }
+            set { EditorPrefs.SetBool(AutoKey, value); }
+        }
+
+        private static void QueueGround()
+        {
+            if (!AutoGround) return;
+            groundDue = EditorApplication.timeSinceStartup + Debounce;
+            if (hooked) return;
+            hooked = true;
+            EditorApplication.update += PumpGround;
+        }
+
+        private static void PumpGround()
+        {
+            if (groundDue <= 0d || EditorApplication.timeSinceStartup < groundDue) return;
+            groundDue = 0d;
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            CityGroundBuilder.Build(false);
         }
     }
 }

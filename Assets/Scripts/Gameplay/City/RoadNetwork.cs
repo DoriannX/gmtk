@@ -69,6 +69,22 @@ namespace Gameplay.City
         [Tooltip("Hauteur du plan de secours quand aucun collider n'est touche.")]
         [SerializeField] private float groundHeight = 0f;
 
+        // Sans ca un pont est une feuille de papier posee en l'air : la tuile du kit n'a pas
+        // d'epaisseur et rien ne descend jusqu'au sol. Tout est genere depuis la spline, aucun
+        // asset a demander.
+        [Header("Ouvrages")]
+        [Tooltip("Retombee laterale sous le tablier, en metres. C'est elle qui fait lire une " +
+                 "poutre plutot qu'une feuille. Posee sur TOUS les segments : au sol elle finit " +
+                 "sous le trottoir, invisible.")]
+        [SerializeField] private float deckFascia = 0.5f;
+        [Tooltip("Hauteur du garde-corps, en metres. UNIQUEMENT sur les ouvrages : une rue au " +
+                 "sol bordee de murets enfermerait le joueur sur la chaussee.")]
+        [SerializeField] private float parapetHeight = 0.9f;
+        [Tooltip("Espacement des piles, en metres. 0 = pas de piles.")]
+        [SerializeField] private float pierEvery = 14f;
+        [Tooltip("Cote de la section carree d'une pile, en metres.")]
+        [SerializeField] private float pierSize = 1.2f;
+
         [Header("Rendu")]
         [SerializeField] private bool toonShading = true;
         [SerializeField] private Color asphaltColor = new Color(0.24f, 0.24f, 0.26f);
@@ -88,9 +104,11 @@ namespace Gameplay.City
 
         private const string ContainerName = "Generated";
         private const string CapName = "Dessous";
+        private const string PierName = "Pile_";
         private const float CapAbove = 1.5f;      // au-dela, le croisement est un OUVRAGE : on ferme son dessous
         private const HideFlags GenFlags = HideFlags.DontSave | HideFlags.NotEditable;
         private const float MinSegment = 2f;      // bras plus proches que ca -> segment saute
+        private const float TerrainKnotEvery = 12f;  // pas des points de suivi du relief, en m
         private const float SharpLimit = -0.25f;  // cos de l'angle max entre corde et tangente (~105 deg)
         private const float BadFitDeg = 35f;      // ecart-type angulaire au-dela -> gizmo rouge
         private const float MinBranchGap = 10f;   // deux branches plus serrees que ca -> gizmo rouge
@@ -1097,16 +1115,78 @@ namespace Gameplay.City
             if (span.magnitude < MinSegment || dot0 <= SharpLimit || dot1 <= SharpLimit) return false;
 
             float sharp = Mathf.Clamp01(Mathf.Min(dot0, dot1));
+
+            // --- suivi du relief ---
+            // Deux noeuds distants de 80 m relies en droite ENJAMBENT les creux du terrain : la
+            // rue traverse la vallee en viaduc, avec garde-corps et piles a la clef. On pose donc
+            // des points intermediaires cales sur le relief.
+            //
+            // Seulement si les DEUX bouts sont au sol : un ouvrage doit rester droit, c'est tout
+            // son interet. Meme seuil que partout ailleurs.
+            var ground = Terrain();
+            int inner = 0;
+            float lift0 = 0f, lift1 = 0f;
+            if (ground != null)
+            {
+                Vector3 w0 = transform.TransformPoint(p0), w1 = transform.TransformPoint(p1);
+                lift0 = w0.y - ground.Height(w0.x, w0.z);
+                lift1 = w1.y - ground.Height(w1.x, w1.z);
+                if (lift0 < CapAbove && lift1 < CapAbove)
+                    inner = Mathf.Clamp(Mathf.FloorToInt(span.magnitude / TerrainKnotEvery) - 1, 0, 24);
+            }
+
             // Tangentes raccourcies dans les virages serres : a pleine longueur la courbe fait
-            // une boucle sur elle-meme des qu'on depasse ~70 deg.
-            float h = Mathf.Max(0.01f, curvature * span.magnitude * Mathf.Lerp(0.45f, 1f, sharp));
-            var k0 = new BezierKnot(p0, new float3(0f, 0f, -h), new float3(0f, 0f, h),
+            // une boucle sur elle-meme des qu'on depasse ~70 deg. Mesurees sur la CORDE entre
+            // deux points consecutifs et pas sur le segment entier, sinon les tangentes des bouts
+            // depassent leur premier voisin et la route ondule.
+            float chord = span.magnitude / (inner + 1);
+            float h = Mathf.Max(0.01f, curvature * chord * Mathf.Lerp(0.45f, 1f, sharp));
+
+            var knots = new BezierKnot[inner + 2];
+            knots[0] = new BezierKnot(p0, new float3(0f, 0f, -h), new float3(0f, 0f, h),
                 quaternion.LookRotationSafe(d0, math.up()));
-            var k1 = new BezierKnot(p1, new float3(0f, 0f, -h), new float3(0f, 0f, h),
+            knots[inner + 1] = new BezierKnot(p1, new float3(0f, 0f, -h), new float3(0f, 0f, h),
                 quaternion.LookRotationSafe(d1, math.up()));
+
+            for (int i = 1; i <= inner; i++)
+            {
+                float t = (float)i / (inner + 1);
+                Vector3 q = Vector3.Lerp(p0, p1, t);
+                Vector3 w = transform.TransformPoint(q);
+                // La hauteur des bouts est interpolee EN PLUS du relief : un bout legerement
+                // leve (bordure de rampe) ne se fait pas rabattre au sol des le premier point.
+                w.y = ground.Height(w.x, w.z) + Mathf.Lerp(lift0, lift1, t);
+                knots[i] = Smooth(transform.InverseTransformPoint(w), p0, p1, ground, t, inner,
+                                  lift0, lift1);
+            }
+
             // TangentMode par defaut = Broken -> nos tangentes sont conservees telles quelles.
-            spline = new Spline(new[] { k0, k1 }, false);
+            spline = new Spline(knots, false);
             return true;
+        }
+
+        // Noeud intermediaire en Catmull-Rom : la tangente regarde ses deux voisins, ce qui donne
+        // une pente continue d'un bout a l'autre. Les voisins sont recalcules et pas memorises --
+        // la boucle appelante n'a alors rien a se trainer, et le cout est celui d'un Perlin.
+        private BezierKnot Smooth(Vector3 pos, Vector3 p0, Vector3 p1, CityTerrain ground,
+                                  float t, int inner, float lift0, float lift1)
+        {
+            float dt = 1f / (inner + 1);
+            Vector3 prev = OnTerrain(p0, p1, t - dt, ground, lift0, lift1);
+            Vector3 next = OnTerrain(p0, p1, t + dt, ground, lift0, lift1);
+            Vector3 m = (next - prev) * 0.5f;
+            float mag = Mathf.Max(0.01f, m.magnitude) / 3f;
+            Vector3 dir = m.sqrMagnitude > 1e-8f ? m.normalized : (p1 - p0).normalized;
+            return new BezierKnot(pos, new float3(0f, 0f, -mag), new float3(0f, 0f, mag),
+                                  quaternion.LookRotationSafe(dir, math.up()));
+        }
+
+        private Vector3 OnTerrain(Vector3 p0, Vector3 p1, float t, CityTerrain ground,
+                                  float lift0, float lift1)
+        {
+            Vector3 w = transform.TransformPoint(Vector3.Lerp(p0, p1, t));
+            w.y = ground.Height(w.x, w.z) + Mathf.Lerp(lift0, lift1, t);
+            return transform.InverseTransformPoint(w);
         }
 
         private void BuildSegment(Transform root, int k)
@@ -1136,7 +1216,14 @@ namespace Gameplay.City
             }
             go.transform.localPosition = Vector3.up * SurfaceY;
 
-            Mesh mesh = RoadMeshWarp.Warp(Curves(spline) ? tileFine : tile, spline, mf.sharedMesh);
+            var deck = new RoadMeshWarp.Deck
+            {
+                fascia = Mathf.Max(0f, deckFascia),
+                parapet = IsOverpass(spline) ? Mathf.Max(0f, parapetHeight) : 0f,
+                parapetBase = SidewalkHeight
+            };
+
+            Mesh mesh = RoadMeshWarp.Warp(Curves(spline) ? tileFine : tile, spline, mf.sharedMesh, deck);
             if (mesh == null) { DestroyChildren(go.transform); DestroyImmediate(go); return; }
             mesh.name = "RoadSeg_" + k;
             mesh.hideFlags = HideFlags.DontSave;
@@ -1150,6 +1237,80 @@ namespace Gameplay.City
                 if (mc != null) DestroyImmediate(mc);
             }
             else AddCollider(go, mesh);
+
+            // Les piles sont des objets a part et pas des sommets du tablier : elles ont besoin
+            // de la hauteur du SOL sous chaque point, que le warp ignore, et un cube portant son
+            // BoxCollider donne la collision gratuitement (on peut se planter dedans).
+            BuildPiers(go.transform, spline, deck);
+        }
+
+        // Un segment est un OUVRAGE des qu'il passe franchement au-dessus du sol. Meme seuil que
+        // le dessous des croisements et que la non-perforation du sol : un seul chiffre a bouger.
+        private bool IsOverpass(Spline spline)
+        {
+            return DeckClearance(spline) > CapAbove;
+        }
+
+        // Hauteur maximale du tablier au-dessus du terrain, en metres.
+        private float DeckClearance(Spline spline)
+        {
+            float best = 0f;
+            for (int i = 0; i <= 8; i++)
+            {
+                Vector3 w = transform.TransformPoint(SplinePoint(spline, i / 8f));
+                best = Mathf.Max(best, w.y - GroundUnder(w));
+            }
+            return best;
+        }
+
+        private Vector3 SplinePoint(Spline spline, float t)
+        {
+            spline.Evaluate(t, out float3 p, out _, out _);
+            return (Vector3)p;
+        }
+
+        // Sol sous un point du monde : le relief s'il y en a un, sinon le plan de secours.
+        private float GroundUnder(Vector3 world)
+        {
+            var t = Terrain();
+            return t != null ? t.Height(world.x, world.z) : transform.position.y + groundHeight;
+        }
+
+        private void BuildPiers(Transform seg, Spline spline, RoadMeshWarp.Deck deck)
+        {
+            for (int i = seg.childCount - 1; i >= 0; i--)
+                if (seg.GetChild(i).name.StartsWith(PierName)) DestroyImmediate(seg.GetChild(i).gameObject);
+
+            if (pierEvery < 1f || dragging || !IsOverpass(spline)) return;
+
+            float len = spline.GetLength();
+            // Une pile a chaque bout ferait doublon avec la culee, qui est deja un remblai : on
+            // repartit les piles A L'INTERIEUR de la portee.
+            int count = Mathf.FloorToInt(len / pierEvery);
+            if (count < 1) return;
+
+            float deckBottom = tile.bottom - deck.fascia;
+            for (int i = 1; i <= count; i++)
+            {
+                Vector3 local = SplinePoint(spline, (float)i / (count + 1));
+                Vector3 world = transform.TransformPoint(local);
+                float ground = GroundUnder(world);
+                float top = world.y + deckBottom + SurfaceY;
+                float h = top - ground;
+                // Sous cette hauteur la pile serait un caillou coince entre le sol et le tablier :
+                // c'est le cas des abords d'ouvrage, ou le remblai monte deja chercher la route.
+                if (h < 1f) continue;
+
+                var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                pier.name = PierName + i;
+                pier.hideFlags = GenFlags;
+                pier.GetComponent<MeshRenderer>().sharedMaterial = RoadMat();
+                pier.transform.SetParent(seg, false);
+                // seg porte deja SurfaceY : on repasse en local pour que la pile suive le segment.
+                pier.transform.position = new Vector3(world.x, ground + h * 0.5f, world.z);
+                pier.transform.rotation = Quaternion.identity;
+                pier.transform.localScale = new Vector3(pierSize, h, pierSize);
+            }
         }
 
         private static void AddCollider(GameObject go, Mesh mesh)

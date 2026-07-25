@@ -65,7 +65,12 @@ namespace Gameplay.EditorTools
         const float MinSize = 400f;
 
         [MenuItem("Tools/Ville/Generer le sol")]
-        public static void Build()
+        public static void Build() { Build(true); }
+
+        // `select` : la generation par le menu selectionne le sol produit, la generation
+        // automatique apres une edition de route ne le fait surtout PAS -- elle volerait la
+        // selection du noeud qu'on est en train de regler.
+        public static void Build(bool select)
         {
             var nets = Object.FindObjectsByType<RoadNetwork>(FindObjectsSortMode.None);
 
@@ -119,8 +124,9 @@ namespace Gameplay.EditorTools
 
             Undo.CollapseUndoOperations(group);
             EditorSceneManager.MarkSceneDirty(go.scene);
-            Selection.activeGameObject = go;
+            if (!select) return;
 
+            Selection.activeGameObject = go;
             Debug.Log($"[Ville] Sol : trottoir a y = {groundY:F3}, {mesh.vertexCount} sommets, " +
                       $"{mesh.triangles.Length / 3} triangles. Couleur reglable sur {MatPath}.");
         }

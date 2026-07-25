@@ -288,9 +288,21 @@ namespace Gameplay.City
             public Vector3 pos, fwd, right, up;
         }
 
+        // Habillage d'OUVRAGE, en plus de la tuile. Tout est en metres, dans le repere de la
+        // tuile (chaussee a ~0). Zero partout = comportement d'avant, une rue au sol.
+        //
+        // Sans ca un pont est une FEUILLE DE PAPIER : la tuile du kit n'a pas d'epaisseur, et le
+        // ruban du dessous la ferme sans rien lui donner de visible depuis le cote.
+        public struct Deck
+        {
+            public float fascia;       // retombee laterale sous le tablier -> ca se lit comme une poutre
+            public float parapet;      // hauteur du garde-corps au-dessus du trottoir (0 = aucun)
+            public float parapetBase;  // y du trottoir, d'ou part le garde-corps
+        }
+
         // Warpe la tuile le long de la spline. Retourne null si la spline est trop courte ou
         // la tuile invalide. `reuse` evite de reallouer un Mesh a chaque frame de drag.
-        public static Mesh Warp(in Tile tile, Spline spline, Mesh reuse)
+        public static Mesh Warp(in Tile tile, Spline spline, Mesh reuse, Deck deck = default(Deck))
         {
             if (!tile.valid) return null;
             float len = spline.GetLength();
@@ -342,8 +354,14 @@ namespace Gameplay.City
             int vn = tile.verts.Length;
             int soffitV = 2 * (k + 1);
             int soffitT = k * 6;
-            int total = vn * repeats + soffitV;
-            int triCount = tile.tris.Length * repeats + soffitT;
+            // Flancs : 4 bandes (bord droit et gauche, chacune vue de dehors ET de dedans). Les
+            // deux faces sont emises separement parce qu'elles n'ont pas la meme normale -- un
+            // garde-corps sans face interieure disparait des qu'on roule sur le pont.
+            bool hasSides = deck.fascia > 0.001f || deck.parapet > 0.001f;
+            int sideV = hasSides ? 8 * (k + 1) : 0;
+            int sideT = hasSides ? k * 24 : 0;
+            int total = vn * repeats + soffitV + sideV;
+            int triCount = tile.tris.Length * repeats + soffitT + sideT;
 
             // Pendant un drag, `repeats` ne change en general pas d'une frame a l'autre : les
             // triangles et les UV sont alors identiques et n'ont pas besoin d'etre re-uploades.
@@ -410,7 +428,9 @@ namespace Gameplay.City
                 // 1 cm SOUS le point le plus bas : la tuile garde quelques triangles bas
                 // isoles, exactement a cette hauteur -> coplanaires avec le ruban, ils
                 // mouchettent le dessous en z-fighting.
-                Vector3 b = fr.pos + fr.up * (tile.bottom - SoffitBias);
+                // Le dessous descend avec la retombee : sinon le ruban resterait colle sous la
+                // chaussee et les flancs pendraient dans le vide.
+                Vector3 b = fr.pos + fr.up * (tile.bottom - deck.fascia - SoffitBias);
                 int o = sBase + s * 2;
                 outV[o] = b - fr.right * hw;
                 outV[o + 1] = b + fr.right * hw;
@@ -431,6 +451,66 @@ namespace Gameplay.City
                     int o = tBase + s * 6;
                     outTris[o] = l0; outTris[o + 1] = r0; outTris[o + 2] = l1;
                     outTris[o + 3] = r0; outTris[o + 4] = r1; outTris[o + 5] = l1;
+                }
+            }
+
+            // --- flancs : une seule bande verticale par bord ---
+            // Elle court du bas de la retombee jusqu'au haut du garde-corps. Les deux d'un coup
+            // parce que c'est la MEME arete du tablier qui les porte : les separer laisserait une
+            // fente a hauteur de trottoir des que la spline tourne.
+            if (hasSides)
+            {
+                int fBase = sBase + soffitV;
+                int fTri = tile.tris.Length * repeats + soffitT;
+                float yLo = tile.bottom - deck.fascia;
+                float yHi = deck.parapet > 0.001f ? deck.parapetBase + deck.parapet : tile.bottom;
+
+                for (int band = 0; band < 4; band++)
+                {
+                    float side = band < 2 ? 1f : -1f;        // +right = bord droit
+                    bool outward = (band & 1) == 0;
+                    int vb = fBase + band * 2 * (k + 1);
+
+                    for (int s = 0; s <= k; s++)
+                    {
+                        Frame fr = stations[s];
+                        Vector3 e = fr.pos + fr.right * (hw * side);
+                        int o = vb + s * 2;
+                        outV[o] = e + fr.up * yLo;
+                        outV[o + 1] = e + fr.up * yHi;
+                        if (outN != null)
+                        {
+                            Vector3 nv = fr.right * (side * (outward ? 1f : -1f));
+                            outN[o] = nv; outN[o + 1] = nv;
+                        }
+                        if (outT != null)
+                        {
+                            var tw = new Vector4(fr.fwd.x, fr.fwd.y, fr.fwd.z, -1f);
+                            outT[o] = tw; outT[o + 1] = tw;
+                        }
+                        if (outUV != null) { outUV[o] = tile.bottomUV; outUV[o + 1] = tile.bottomUV; }
+                    }
+
+                    if (outTris == null) continue;
+                    // (bas0, haut0, bas1) puis (haut0, haut1, bas1) donne une normale +right ;
+                    // le bord gauche et les faces interieures inversent l'ordre.
+                    bool reverse = (side > 0f) != outward;
+                    int tb = fTri + band * k * 6;
+                    for (int s = 0; s < k; s++)
+                    {
+                        int a = vb + s * 2, b2 = a + 1, c = a + 2, d = a + 3;
+                        int o = tb + s * 6;
+                        if (reverse)
+                        {
+                            outTris[o] = a; outTris[o + 1] = c; outTris[o + 2] = b2;
+                            outTris[o + 3] = b2; outTris[o + 4] = c; outTris[o + 5] = d;
+                        }
+                        else
+                        {
+                            outTris[o] = a; outTris[o + 1] = b2; outTris[o + 2] = c;
+                            outTris[o + 3] = b2; outTris[o + 4] = d; outTris[o + 5] = c;
+                        }
+                    }
                 }
             }
 

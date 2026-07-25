@@ -113,6 +113,8 @@ namespace Gameplay.EditorTools
                 "Shift+Ctrl+clic sur un noeud : le supprime.\n" +
                 "Ctrl+clic sur une route : variante de la tuile visee " +
                 "(auto -> passage pieton -> egouts -> normale -> auto).\n" +
+                "1 / 2 / 3 : route / escalier / egout. Change ce que le prochain trace produira, " +
+                "et convertit le segment sous la souris s'il y en a un.\n" +
                 "Outil Rotate (E) : disque sur le noeud selectionne, Ctrl pour un pas de 15 deg.",
                 MessageType.Info);
 
@@ -211,6 +213,7 @@ namespace Gameplay.EditorTools
             // devenait impossible a deplacer.
             HandleRoadClick(net, e);
             DrawPendingLink(net, e);
+            DrawPalette(net, e);
         }
 
         // Clic simple : SELECTIONNER UN NOEUD, pas le pan de route.
@@ -228,12 +231,36 @@ namespace Gameplay.EditorTools
             if (e.shift || e.alt || e.control) return;
 
             int hit = PickNode(net, e.mousePosition);
-            if (hit < 0) return;
+            if (hit >= 0)
+            {
+                // Pas de e.Use() : la poignee dessinee juste apres doit pouvoir prendre le drag
+                // dans le meme evenement, sinon il faut cliquer deux fois pour bouger un noeud.
+                selected = hit;
+                Repaint();
+                return;
+            }
 
-            // Pas de e.Use() : la poignee dessinee juste apres doit pouvoir prendre le drag dans
-            // le meme evenement, sinon il faut cliquer deux fois pour bouger un noeud.
-            selected = hit;
-            Repaint();
+            // Clic LOIN de la poignee du noeud courant -> il ne lui est pas destine, et on tente
+            // la selection par la route TOUT DE SUITE.
+            //
+            // C'est le seul moment ou c'est possible. La poignee de position couvre ~80 px autour
+            // du noeud et prend le MouseDown pendant DrawNodes ; le rattrapage de fin de boucle
+            // (HandleRoadClick) ne voyait alors plus qu'un evenement deja consomme, et on restait
+            // colle au noeud selectionne sans pouvoir en viser un autre -- il fallait
+            // deselectionner puis recliquer sur Roads pour s'en sortir.
+            if (selected >= 0 && selected < net.NodeCount && FarFromHandle(net, e))
+                TrySelectFromRoad(net, e);
+        }
+
+        // Rayon d'action de la poignee de position, en PIXELS : elle est dessinee a taille ecran
+        // constante, donc une valeur en pixels est exacte a tout zoom. 95 couvre les fleches
+        // (~80 px) plus les carres de plan.
+        const float HandleRadius = 95f;
+
+        private bool FarFromHandle(RoadNetwork net, Event e)
+        {
+            Vector2 g = HandleUtility.WorldToGUIPoint(net.NodeWorld(selected));
+            return (g - e.mousePosition).sqrMagnitude >= HandleRadius * HandleRadius;
         }
 
         // Clic sur un pan de route : selectionne le noeud le plus proche plutot que de laisser
@@ -244,7 +271,11 @@ namespace Gameplay.EditorTools
             if (e.shift || e.alt || e.control) return;
             // Une poignee a deja pris le clic : c'est un deplacement, pas une selection.
             if (GUIUtility.hotControl != 0) return;
+            TrySelectFromRoad(net, e);
+        }
 
+        private void TrySelectFromRoad(RoadNetwork net, Event e)
+        {
             Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
             int seg = net.NearestSegment(ray, out Vector3 onAxis);
             if (seg < 0) return;
@@ -303,9 +334,86 @@ namespace Gameplay.EditorTools
             }
         }
 
+        // ---------------------------------------------------------------- palette de trace
+
+        // NATURE du prochain trace. Dans les EditorPrefs et pas sur le composant : c'est un
+        // reglage d'outil, pas une donnee de scene, et l'ecrire dans la scene ferait un diff a
+        // chaque fois qu'on change de pinceau -- sur un projet ou les scenes se merge a
+        // plusieurs, ca ne se pardonne pas.
+        private const string KindKey = "gmtk.ville.traceKind";
+
+        private static RoadNetwork.SegmentKind ActiveKind
+        {
+            get { return (RoadNetwork.SegmentKind)EditorPrefs.GetInt(KindKey, 0); }
+            set { EditorPrefs.SetInt(KindKey, (int)value); }
+        }
+
+        private static string KindName(RoadNetwork.SegmentKind k)
+        {
+            switch (k)
+            {
+                case RoadNetwork.SegmentKind.Escalier: return "ESCALIER";
+                case RoadNetwork.SegmentKind.Egout: return "EGOUT";
+                default: return "ROUTE";
+            }
+        }
+
+        private static Color KindColor(RoadNetwork.SegmentKind k)
+        {
+            switch (k)
+            {
+                case RoadNetwork.SegmentKind.Escalier: return new Color(1f, 0.75f, 0.25f);
+                case RoadNetwork.SegmentKind.Egout: return new Color(0.35f, 0.85f, 1f);
+                default: return new Color(0.75f, 0.75f, 0.78f);
+            }
+        }
+
         private void HandleKeys(RoadNetwork net, Event e)
         {
-            if (e.type != EventType.KeyDown || selected < 0 || selected >= net.NodeCount) return;
+            if (e.type != EventType.KeyDown) return;
+
+            // 1/2/3 : choisit la nature du trace. Et si la souris designe un segment, le
+            // CONVERTIT dans la foulee -- viser une rue et taper 2 la change en escalier. Les
+            // deux gestes tiennent sur la meme touche parce que c'est la meme intention ("ceci
+            // est un escalier"), et parce qu'un modificateur de plus n'etait pas disponible :
+            // Ctrl fait deja les variantes de tuile et Alt appartient a l'orbite de la vue.
+            int digit = e.keyCode == KeyCode.Alpha1 || e.keyCode == KeyCode.Keypad1 ? 0
+                      : e.keyCode == KeyCode.Alpha2 || e.keyCode == KeyCode.Keypad2 ? 1
+                      : e.keyCode == KeyCode.Alpha3 || e.keyCode == KeyCode.Keypad3 ? 2
+                      : -1;
+            if (digit >= 0)
+            {
+                var kind = (RoadNetwork.SegmentKind)digit;
+                ActiveKind = kind;
+
+                int seg = HoveredSegment(net, e);
+                if (seg >= 0 && net.SegmentKindOf(seg) != kind)
+                {
+                    Undo.RecordObject(net, "Nature du trace");
+                    net.SetSegmentKind(seg, kind);
+                    MarkDirty(net);
+                }
+                Repaint();
+                SceneView.RepaintAll();
+                e.Use();
+                return;
+            }
+
+            // Echap LACHE le noeud courant. Sortie explicite : sans elle, le seul moyen de se
+            // detacher d'un point etait de selectionner un autre objet puis de revenir sur Roads.
+            // On ne consomme la touche que si un noeud etait tenu, pour que Echap garde son role
+            // habituel (sortir de l'outil) le reste du temps.
+            if (e.keyCode == KeyCode.Escape)
+            {
+                if (selected < 0) return;
+                selected = -1;
+                Repaint();
+                SceneView.RepaintAll();
+                e.Use();
+                return;
+            }
+
+            if (selected < 0 || selected >= net.NodeCount) return;
             if (e.keyCode != KeyCode.Delete && e.keyCode != KeyCode.Backspace) return;
 
             Undo.RecordObject(net, "Supprimer noeud route");
@@ -314,6 +422,49 @@ namespace Gameplay.EditorTools
             net.FullRebuild();
             MarkDirty(net);
             e.Use();
+        }
+
+        // Segment sous la souris, ou -1. Meme tolerance en pixels que le clic, pour que viser au
+        // clavier et viser a la souris se comportent pareil.
+        private static int HoveredSegment(RoadNetwork net, Event e)
+        {
+            Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
+            int seg = net.NearestSegment(ray, out Vector3 onAxis);
+            if (seg < 0) return -1;
+            return (HandleUtility.WorldToGUIPoint(onAxis) - e.mousePosition).sqrMagnitude
+                   < SegmentPickRadius * SegmentPickRadius ? seg : -1;
+        }
+
+        // Bandeau de palette. Un EditorTool aurait sa propre barre d'outils, mais celui-ci est un
+        // [CustomEditor] : le seul endroit ou dire a l'auteur ce que son prochain clic va tracer,
+        // c'est la vue elle-meme.
+        private void DrawPalette(RoadNetwork net, Event e)
+        {
+            Handles.BeginGUI();
+            var r = new Rect(12f, 12f, 250f, 74f);
+            GUILayout.BeginArea(r, GUI.skin.box);
+            GUILayout.Label("Trace : " + KindName(ActiveKind), EditorStyles.boldLabel);
+
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i <= 2; i++)
+            {
+                var k = (RoadNetwork.SegmentKind)i;
+                bool on = ActiveKind == k;
+                Color old = GUI.backgroundColor;
+                if (on) GUI.backgroundColor = KindColor(k);
+                if (GUILayout.Button($"{i + 1} {KindName(k)}", EditorStyles.miniButton))
+                {
+                    ActiveKind = k;
+                    SceneView.RepaintAll();
+                }
+                GUI.backgroundColor = old;
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label("1/2/3 : nature du trace, et convertit le segment vise",
+                            EditorStyles.miniLabel);
+            GUILayout.EndArea();
+            Handles.EndGUI();
         }
 
         private void HandleShiftClick(RoadNetwork net, Event e)
@@ -340,7 +491,7 @@ namespace Gameplay.EditorTools
                 else
                 {
                     Undo.RecordObject(net, "Relier noeuds route");
-                    if (selected >= 0) net.AddSegment(selected, hit);
+                    if (selected >= 0) net.AddSegment(selected, hit, ActiveKind);
                     selected = hit;
                     net.FullRebuild();
                     MarkDirty(net);
@@ -361,7 +512,8 @@ namespace Gameplay.EditorTools
                 int inserted = net.SplitSegment(seg, onAxis);
                 if (inserted >= 0)   // -1 = trop pres d'une extremite, on retombe sur la pose normale
                 {
-                    if (selected >= 0 && selected != inserted) net.AddSegment(selected, inserted);
+                    if (selected >= 0 && selected != inserted)
+                        net.AddSegment(selected, inserted, ActiveKind);
                     selected = inserted;
                     net.FullRebuild();
                     MarkDirty(net);
@@ -373,7 +525,12 @@ namespace Gameplay.EditorTools
             Vector3 world = RayToGround(net, ray);
             Undo.RecordObject(net, "Poser noeud route");
             int added = net.AddNodeWorld(world);
-            if (selected >= 0) net.AddSegment(selected, added);
+            // Un noeud d'egout s'enfonce d'office de la profondeur du canal : la spline porte le
+            // FOND, donc pose au ras du sol la levre flotterait a 4 m au-dessus du terrain. C'est
+            // la seule hauteur qui donne un canal affleurant, autant la poser tout seul -- elle
+            // reste modifiable comme n'importe quelle autre.
+            if (ActiveKind == RoadNetwork.SegmentKind.Egout) net.SetNodeLift(added, -net.EgoutDepth);
+            if (selected >= 0) net.AddSegment(selected, added, ActiveKind);
             selected = added;
             net.FullRebuild();
             MarkDirty(net);

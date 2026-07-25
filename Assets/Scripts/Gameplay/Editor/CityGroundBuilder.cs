@@ -81,9 +81,19 @@ namespace Gameplay.EditorTools
         const float ProbeRange = 30f;
         // Le bord exterieur doit finir hors de vue : le brouillard ne le cache pas (sa couleur
         // est plus claire que le ciel juste au-dessus de l'horizon, l'arete se lit en vue
-        // aerienne). Un quad de plus ne coute rien.
-        const float FarMargin = 350f;
-        const float MinSize = 400f;
+        // aerienne).
+        //
+        // Dimensionne sur le PLAN LOINTAIN DE LA CAMERA (1000 m) et non sur le brouillard, qui
+        // sature vers 610 m : au-dela du plan lointain il n'y a plus rien a couvrir, en deca le
+        // bord peut se lire en vue aerienne ou le brouillard porte moins. 350 m ne suffisait
+        // pas -- depuis le bord de la ville, la fin du monde tombait en plein champ visible.
+        //
+        // Le surcout est nul par construction : cet anneau est PLAT, donc fait de grandes dalles
+        // et pas de la grille fine. Passer de 350 a 1400 m triple l'emprise du sol pour environ
+        // un millier de sommets, sur les 60 000 que pese la grille fine. C'est la grille fine
+        // qui coute, et elle ne bouge pas d'un pouce ici.
+        const float FarMargin = 1400f;
+        const float MinSize = 1200f;
 
         [MenuItem("Tools/Ville/Generer le sol")]
         public static void Build() { Build(true); }
@@ -126,6 +136,7 @@ namespace Gameplay.EditorTools
             }
 
             var mesh = BuildMesh(nets, terrain, all, roads, groundY);
+            CaptureLive(mesh, nets, terrain, groundY);
 
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
@@ -158,6 +169,87 @@ namespace Gameplay.EditorTools
                       $"{mesh.triangles.Length / 3} triangles. Couleur reglable sur {MatPath}.");
         }
 
+        // ---------------------------------------------------------------- mise a jour vivante
+        //
+        // Le pinceau de relief doit montrer ce qu'il fait PENDANT le trait. Une generation
+        // complete coute ~250 ms : impossible a lancer par evenement souris, et c'est ce delai
+        // qui rendait le pinceau aveugle.
+        //
+        // On garde donc la disposition de la derniere grille generee, et on ne recalcule QUE les
+        // sommets sous le disque -- quelques centaines au lieu de 50 000. Ce qui n'est PAS
+        // recalcule : la liste des cellules gardees. Sculpter ne deplace pas une route, donc
+        // l'emprise routiere ne bouge pas ; le seul cas ou elle bougerait est un terrain remonte
+        // au point de transformer un pont en remblai, et la generation complete du relachement
+        // de la souris s'en charge.
+        //
+        // Le collider n'est PAS recuisiné ici (Physics.BakeMesh coute plus cher que tout le
+        // reste). La visee du pinceau ne passe pas par lui : elle interroge le champ de hauteur
+        // directement (CityTerrainTool.RayTerrain).
+        static Mesh liveMesh;
+        static Vector3[] liveVerts;
+        static int[] gridIndex;
+        static int gridCx, gridCz;
+        static float gridX0, gridZ0, gridY;
+        static RoadNetwork[] liveNets;
+        static CityTerrain liveTerrain;
+        static Vector4[] liveChords;
+        static float liveReach2;
+
+        static void CaptureLive(Mesh mesh, RoadNetwork[] nets, CityTerrain terrain, float y)
+        {
+            liveMesh = mesh;
+            liveVerts = mesh != null ? mesh.vertices : null;
+            liveNets = nets;
+            liveTerrain = terrain;
+            gridY = y;
+            liveChords = Chords(nets);
+            float reach = ProbeRange + MaxHalfWidth(nets) + ChordSlack;
+            liveReach2 = reach * reach;
+        }
+
+        // Recalcule les hauteurs du sol dans un disque. Rend faux si aucune grille n'est en
+        // cache -- a l'appelant de retomber sur une generation complete.
+        public static bool RefreshArea(Vector3 centre, float radius)
+        {
+            if (liveMesh == null || liveVerts == null || gridIndex == null) return false;
+            if (liveTerrain == null) return false;
+
+            int ri0 = Mathf.FloorToInt((centre.x - radius - gridX0) / Cell);
+            int ri1 = Mathf.CeilToInt((centre.x + radius - gridX0) / Cell);
+            int rj0 = Mathf.FloorToInt((centre.z - radius - gridZ0) / Cell);
+            int rj1 = Mathf.CeilToInt((centre.z + radius - gridZ0) / Cell);
+
+            // Le pinceau deborde-t-il de la grille fine ? Si oui, il peint la ou le sol n'a pas
+            // encore de sommets : on met a jour ce qu'on peut, mais on rend FAUX pour que
+            // l'appelant declenche une generation complete, seule capable d'etendre la grille.
+            bool covered = ri0 >= 0 && rj0 >= 0 && ri1 <= gridCx && rj1 <= gridCz;
+
+            int i0 = Mathf.Max(0, ri0), i1 = Mathf.Min(gridCx, ri1);
+            int j0 = Mathf.Max(0, rj0), j1 = Mathf.Min(gridCz, rj1);
+            if (i0 > i1 || j0 > j1) return false;
+
+            for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    int k = j * (gridCx + 1) + i;
+                    int vi = gridIndex[k];
+                    if (vi < 0 || vi >= liveVerts.Length) continue;
+                    var p = new Vector3(gridX0 + i * Cell, gridY, gridZ0 + j * Cell);
+                    bool ignored;
+                    liveVerts[vi].y = Sample(liveNets, liveTerrain, gridY, p, liveChords,
+                                             liveReach2, out ignored);
+                }
+
+            liveMesh.SetVertices(liveVerts);
+            // Sans les normales, une butte fraiche s'eclaire comme un plan : on ne voit RIEN de
+            // ce qu'on sculpte, ce qui etait tout le probleme.
+            liveMesh.RecalculateNormals();
+            liveMesh.RecalculateBounds();
+            return covered;
+        }
+
+        public static void InvalidateLive() { liveMesh = null; liveVerts = null; gridIndex = null; }
+
         // ---------------------------------------------------------------- geometrie
 
         static Mesh BuildMesh(RoadNetwork[] nets, CityTerrain terrain, Bounds all, Bounds roads,
@@ -183,6 +275,16 @@ namespace Gameplay.EditorTools
                 float r = terrain.radius;
                 fine.Encapsulate(new Vector3(c.x - r, 0f, c.z - r));
                 fine.Encapsulate(new Vector3(c.x + r, 0f, c.z + r));
+
+                // Et tout ce qui a ete SCULPTE A LA MAIN, ou qu'il soit. On suit l'emprise
+                // reellement peinte et pas le rayon peignable : sculpter une butte a 500 m ne
+                // doit tesseller que cette butte, pas le kilometre carre autour.
+                Bounds painted;
+                if (terrain.SculptBounds(out painted))
+                {
+                    fine.Encapsulate(new Vector3(painted.min.x, 0f, painted.min.z));
+                    fine.Encapsulate(new Vector3(painted.max.x, 0f, painted.max.z));
+                }
             }
 
             float nx0 = Mathf.Floor(fine.min.x / Cell) * Cell;
@@ -198,11 +300,15 @@ namespace Gameplay.EditorTools
             var verts = new List<Vector3>();
             var tris = new List<int>();
 
+            // Retenu pour la mise a jour vivante du pinceau de relief (voir RefreshArea).
+            gridX0 = nx0; gridZ0 = nz0; gridCx = cx; gridCz = cz;
+
             // --- grille fine, une cellule gardee seulement si ses 4 coins sont hors route ---
             // Table des sommets : -1 tant que le sommet n'a servi a aucune cellule gardee, pour
             // ne pas emettre des milliers de sommets orphelins au milieu de la chaussee.
             var index = new int[(cx + 1) * (cz + 1)];
             for (int i = 0; i < index.Length; i++) index[i] = -1;
+            gridIndex = index;
 
             // Cordes des segments, en XZ. Elles servent de PREFILTRE aux requetes de proximite :
             // une requete echantillonne la spline et coute ~30 us, la distance a un bout de
@@ -346,9 +452,13 @@ namespace Gameplay.EditorTools
                 // Un croisement est couche dans la pente : sa surface a l'aplomb du point n'est
                 // PAS la hauteur de son centre. Au pied d'une rampe, l'ecart atteignait un metre
                 // et le sol enterrait la route.
+                // La surface visee depend de la NATURE du trace. Une route se raccorde par ses
+                // trottoirs, un escalier par sa volee nue, un egout par la LEVRE de ses parois
+                // -- soit tout en haut du canal, pas au fond : c'est ce qui fait que le sol
+                // reste a plat autour d'un egout au lieu de plonger dedans.
                 roadY = probe.node >= 0
                     ? net.JunctionSurfaceY(probe.node, q)
-                    : probe.point.y + net.SidewalkHeight;
+                    : probe.point.y + net.SurfaceRise(probe.kind);
             }
 
             free = best >= -Overlap;
@@ -392,10 +502,17 @@ namespace Gameplay.EditorTools
             return list.ToArray();
         }
 
+        // Emprise la plus large du reseau, toutes natures confondues : elle dimensionne le
+        // prefiltre par cordes. Prendre la seule largeur de chaussee laisserait un canal
+        // d'egout, deux fois plus large, echapper au filtre -- et le sol se refermerait dessus.
         static float MaxHalfWidth(RoadNetwork[] nets)
         {
             float w = 0f;
-            foreach (var net in nets) w = Mathf.Max(w, net.RoadHalfWidth);
+            foreach (var net in nets)
+            {
+                w = Mathf.Max(w, net.RoadHalfWidth);
+                for (int k = 0; k < net.SegmentCount; k++) w = Mathf.Max(w, net.SegmentHalfWidth(k));
+            }
             return w;
         }
 

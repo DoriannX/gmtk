@@ -33,10 +33,22 @@ namespace Gameplay.City
             public float lift;
         }
 
+        // NATURE d'un trace. Le geste d'auteur est le meme pour les trois -- poser des points,
+        // tirer un segment -- seule la geometrie produite change, et avec elle la facon dont le
+        // sol se creuse autour. Route vaut ZERO : les segments serialises avant l'existence de
+        // ce champ se relisent donc en routes, sans migration a ecrire.
+        public enum SegmentKind
+        {
+            Route = 0,
+            Escalier = 1,
+            Egout = 2,
+        }
+
         [System.Serializable]
         public class Segment
         {
             public int a, b;
+            public SegmentKind kind;
         }
 
         [Header("Assets de route")]
@@ -103,6 +115,31 @@ namespace Gameplay.City
         [SerializeField, Range(0f, 1f)] private float pietonChance = 0.45f;
         [Tooltip("Proportion des autres tuiles qui recoivent des bouches d'egout.")]
         [SerializeField, Range(0f, 1f)] private float egoutsChance = 0.2f;
+
+        // Escalier et egout n'ont AUCUN asset dans le kit : leur geometrie est generee depuis la
+        // spline (RoadMeshWarp.Stairs / .Channel). Tout se regle donc ici, en metres.
+        [Header("Escaliers")]
+        [Tooltip("Largeur de la volee, en metres.")]
+        [SerializeField] private float stairWidth = 6f;
+        [Tooltip("Hauteur d'une marche, en metres. Le nombre de marches en decoule : c'est le " +
+                 "denivele entre les deux bouts divise par cette valeur.")]
+        [SerializeField] private float stairRiser = 0.35f;
+        [Tooltip("Descente des joues sous le bout le plus bas, en metres. Elles cachent le " +
+                 "raccord avec le sol ; trop court, on voit le terrain entre deux marches.")]
+        [SerializeField] private float stairSkirt = 1.5f;
+
+        [Header("Egouts")]
+        [Tooltip("Demi-largeur du FOND du canal, en metres. La partie plate, celle ou on roule.")]
+        [SerializeField] private float egoutHalfWidth = 5f;
+        [Tooltip("Hauteur des parois au-dessus du fond, en metres. C'est la profondeur du canal " +
+                 "sous la levre, pas sous le terrain : poser les noeuds plus bas creuse plus.")]
+        [SerializeField] private float egoutDepth = 4f;
+        [Tooltip("Emprise horizontale du quart-de-rond, en metres. C'est le RAYON DE TRANSITION " +
+                 "du half-pipe : court = paroi seche qu'on tape, long = courbe qu'on remonte.")]
+        [SerializeField] private float egoutWall = 4f;
+        [Tooltip("Levre plate au sommet des parois, en metres. Le sol vient se recouvrir dessus, " +
+                 "comme il le fait sous le trottoir d'une tuile de route. Ne pas descendre sous 3.")]
+        [SerializeField] private float egoutLip = 3.5f;
 
         [Header("Rendu")]
         [SerializeField] private bool toonShading = true;
@@ -357,18 +394,20 @@ namespace Gameplay.City
             segments.RemoveAt(k);
             nodes.Add(new Node { pos = local });
             int n = nodes.Count - 1;
-            segments.Add(new Segment { a = a, b = n });
-            segments.Add(new Segment { a = n, b = b });
+            // Les deux moities heritent de la nature du segment coupe : couper un escalier en
+            // deux doit donner deux escaliers, pas deux rues.
+            segments.Add(new Segment { a = a, b = n, kind = s.kind });
+            segments.Add(new Segment { a = n, b = b, kind = s.kind });
             adj = null;
             return n;
         }
 
-        public bool AddSegment(int a, int b)
+        public bool AddSegment(int a, int b, SegmentKind kind = SegmentKind.Route)
         {
             if (a < 0 || b < 0 || a == b || a >= nodes.Count || b >= nodes.Count) return false;
             foreach (var s in segments)
                 if ((s.a == a && s.b == b) || (s.a == b && s.b == a)) return false;
-            segments.Add(new Segment { a = a, b = b });
+            segments.Add(new Segment { a = a, b = b, kind = kind });
             adj = null;
             return true;
         }
@@ -528,6 +567,9 @@ namespace Gameplay.City
             public Vector3 point;    // point sur l'axe, ou centre du croisement
             public Vector3 tangent;  // monde, normalisee, a plat, sens a -> b
             public bool inside;      // le point interroge est SOUS la route (chaussee + trottoirs)
+            // Nature du trace touche. Le sol ne se raccorde pas de la meme facon a une chaussee
+            // (il vient la chercher) et a un canal d'egout (il s'arrete net sur sa levre).
+            public SegmentKind kind;
         }
 
         // Demi-largeur de la tuile, trottoirs compris (13 m -> 6.5). Repli sur 6.5 si le FBX
@@ -536,6 +578,56 @@ namespace Gameplay.City
         public float RoadHalfWidth
         {
             get { EnsureTile(); return tile.valid && tile.width > 0.01f ? tile.width * 0.5f : 6.5f; }
+        }
+
+        public SegmentKind SegmentKindOf(int k)
+            => k >= 0 && k < segments.Count ? segments[k].kind : SegmentKind.Route;
+
+        public void SetSegmentKind(int k, SegmentKind kind)
+        {
+            if (k < 0 || k >= segments.Count || segments[k].kind == kind) return;
+            segments[k].kind = kind;
+            // Changer la nature change la FORME DU GRAPHE (une route compte dans les croisements,
+            // pas un escalier) : le cache d'adjacence et les splines qui en descendent sont
+            // perimes, y compris ceux des noeuds voisins.
+            adj = null;
+            splineCache = null;
+            FullRebuild();
+        }
+
+        // Demi-emprise d'un trace, tous types confondus. C'est ce que le sol et le pinceau de
+        // ville interrogent : ni l'un ni l'autre n'a a savoir ce qu'il a en face.
+        public float SegmentHalfWidth(int k)
+        {
+            switch (SegmentKindOf(k))
+            {
+                case SegmentKind.Escalier:
+                    return Mathf.Max(0.5f, stairWidth) * 0.5f;
+                // L'emprise d'un egout va jusqu'au bord EXTERIEUR de la levre : c'est la que le
+                // sol doit s'arreter, pas au bord du fond.
+                case SegmentKind.Egout:
+                    return Mathf.Max(0.5f, egoutHalfWidth) + Mathf.Max(0.1f, egoutWall)
+                           + Mathf.Max(0f, egoutLip);
+                default:
+                    return RoadHalfWidth;
+            }
+        }
+
+        // Profondeur du canal sous sa levre. Le sol en a besoin : la levre est a la hauteur du
+        // terrain, donc le fond est a terrain - cette valeur.
+        public float EgoutDepth => Mathf.Max(0.1f, egoutDepth);
+
+        // Hauteur de la surface a laquelle le SOL doit se raccorder, au-dessus de l'axe du
+        // trace. Une route porte ses trottoirs, un escalier n'a rien (le sol touche la volee
+        // elle-meme), un egout presente sa levre tout en haut de ses parois.
+        public float SurfaceRise(SegmentKind kind)
+        {
+            switch (kind)
+            {
+                case SegmentKind.Escalier: return 0f;
+                case SegmentKind.Egout: return EgoutDepth;
+                default: return SidewalkHeight;
+            }
         }
 
         // Hauteur du TROTTOIR au-dessus de la chaussee, mesuree sur la tuile droite. C'est a
@@ -683,7 +775,6 @@ namespace Gameplay.City
 
             Vector3 local = transform.InverseTransformPoint(worldPos);
             var flatXZ = new Vector2(local.x, local.z);
-            float half = RoadHalfWidth;
 
             // On compare des GARDES (distance au bord de l'emprise), pas des distances a l'axe :
             // les deux ne sont pas comparables entre un segment et un croisement, et melanger
@@ -696,6 +787,10 @@ namespace Gameplay.City
                 var spline = splineCache[k];
                 if (spline == null) continue;
 
+                // L'emprise depend de la NATURE du trace : une volee d'escalier de 6 m et un
+                // canal d'egout de 25 m de levre a levre ne creusent pas le meme sol.
+                float half = SegmentHalfWidth(k);
+
                 // Prefiltre : l'emprise stockee est deja gonflee de la fleche de Bezier, on
                 // n'y ajoute que la portee de recherche.
                 Bounds box = splineBoxCache[k];
@@ -706,11 +801,24 @@ namespace Gameplay.City
                 NearestOnPoly(polyCache[k], flatXZ, out Vector3 n, out float t);
                 if (n.y - local.y > maxHeightAbove) continue;   // ouvrage : passe au-dessus
                 float d = Vector2.Distance(flatXZ, new Vector2(n.x, n.z));
-                if (d - half >= bestClear) continue;
 
-                bestClear = d - half;
+                // Emprise en RECTANGLE et non en capsule pour les traces non routiers.
+                //
+                // La distance a l'axe seule fait deborder l'emprise d'un demi-disque au-dela de
+                // chaque bout : le sol se creusait donc sur 9 m devant la bouche d'un egout, la
+                // ou plus aucun mesh ne vient le couvrir -- d'ou un trou beant en eventail. Une
+                // route ne connait pas ce probleme, ses bouts sont toujours manges par un
+                // croisement ; on ne touche donc pas a son cas, qui marche.
+                float clear = d - half;
+                if (segments[k].kind != SegmentKind.Route && (t <= 0f || t >= 1f))
+                    clear = EndClearance(polyCache[k], flatXZ, t <= 0f, half);
+
+                if (clear >= bestClear) continue;
+
+                bestClear = clear;
                 found = true;
                 probe.segment = k;
+                probe.kind = segments[k].kind;
                 probe.node = -1;
                 probe.t = t;
                 probe.distance = d;
@@ -737,6 +845,7 @@ namespace Gameplay.City
                 bestClear = d - r;
                 found = true;
                 probe.segment = -1;
+                probe.kind = SegmentKind.Route;   // un croisement est toujours routier
                 probe.node = i;
                 probe.t = 0f;
                 probe.distance = d;
@@ -775,6 +884,28 @@ namespace Gameplay.City
             wt.y = 0f;
             worldTangent = wt.sqrMagnitude > 1e-6f ? wt.normalized : Vector3.forward;
             return true;
+        }
+
+        // Garde a un BOUT de trace : on decompose l'ecart en composante laterale (par rapport a
+        // l'emprise) et en debordement dans l'axe, et on garde la pire des deux. Le resultat est
+        // la distance au RECTANGLE balaye -- soit exactement l'emprise du mesh produit, qui
+        // s'arrete net a son dernier profil.
+        private static float EndClearance(Vector3[] poly, Vector2 q, bool atStart, float half)
+        {
+            int last = poly.Length - 1;
+            Vector3 e = atStart ? poly[0] : poly[last];
+            Vector3 nb = atStart ? poly[Mathf.Min(1, last)] : poly[Mathf.Max(last - 1, 0)];
+
+            var axis = new Vector2(nb.x - e.x, nb.z - e.z);
+            if (axis.sqrMagnitude < 1e-8f) return Vector2.Distance(q, new Vector2(e.x, e.z)) - half;
+            axis.Normalize();
+
+            var rel = new Vector2(q.x - e.x, q.y - e.z);
+            // `axis` pointe vers l'INTERIEUR du trace : une projection negative est donc un
+            // debordement au-dela du bout.
+            float overshoot = -Vector2.Dot(rel, axis);
+            float lateral = Mathf.Abs(rel.x * -axis.y + rel.y * axis.x);
+            return Mathf.Max(lateral - half, overshoot);
         }
 
         private const float PolyStep = 2f;   // pas d'echantillonnage de l'axe, en metres
@@ -897,6 +1028,7 @@ namespace Gameplay.City
             float half = RoadHalfWidth;
             for (int k = 0; k < segments.Count; k++)
             {
+                if (segments[k].kind != SegmentKind.Route) continue;   // pas de rambarde a grinder
                 if (!SegmentSpline(k, out Spline spline) || !IsOverpass(spline)) continue;
 
                 float len = spline.GetLength();
@@ -1001,6 +1133,12 @@ namespace Gameplay.City
             foreach (var s in segments)
             {
                 if (s.a < 0 || s.b < 0 || s.a >= nodes.Count || s.b >= nodes.Count) continue;
+                // SEULES les routes entrent dans le graphe des croisements. Un escalier qui part
+                // du milieu d'une rue ferait sinon passer le noeud a 3 branches et poserait un
+                // asset de carrefour 3 voies en travers -- alors qu'il n'y a qu'une rue et un
+                // escalier qui s'en detache. Consequence voulue : les traces non routiers n'ont
+                // pas de bras, ils demarrent du CENTRE du noeud (voir Arm).
+                if (s.kind != SegmentKind.Route) continue;
                 adj[s.a].Add(s.b);
                 adj[s.b].Add(s.a);
             }
@@ -1438,7 +1576,45 @@ namespace Gameplay.City
             dir = Vector3.forward;
             var j = junctions[node];
             int n = adj[node].IndexOf(neighbour);
-            if (j == null || n < 0 || j.armYaw.Length == 0) return false;
+
+            // Branche hors du graphe routier (escalier, egout) : elle n'a pas de bras sur
+            // l'asset de croisement, et n'en veut pas. Elle part du CENTRE du noeud, droit vers
+            // son voisin -- donc de sous le carrefour, ce qui est exactement l'aspect voulu
+            // d'un escalier qui descend depuis une rue.
+            if (n < 0)
+            {
+                Vector3 to = nodes[neighbour].pos - nodes[node].pos;
+                to.y = 0f;
+                if (to.sqrMagnitude < 1e-6f) return false;
+                to.Normalize();
+
+                // Si un autre trace de MEME NATURE repart de ce noeud, la direction est la
+                // BISSECTRICE TRAVERSANTE et pas le cap direct vers le voisin -- exactement ce
+                // que fait deja un noeud routier de degre 2.
+                //
+                // Sans ca, les deux troncons abordent le noeud avec des tangentes differentes,
+                // leurs sections y arrivent tournees l'une par rapport a l'autre, et le virage
+                // s'ouvre en V sur l'exterieur du coude. Avec, les deux tangentes sont
+                // exactement opposees, donc colineaires : les sections se raccordent.
+                int self = FindSegment(node, neighbour);
+                int other = self >= 0 ? SoleOther(self, node, segments[self].kind) : -1;
+                if (other >= 0)
+                {
+                    int far = segments[other].a == node ? segments[other].b : segments[other].a;
+                    Vector3 od = nodes[far].pos - nodes[node].pos;
+                    od.y = 0f;
+                    if (od.sqrMagnitude > 1e-6f)
+                    {
+                        Vector3 through = to - od.normalized;
+                        if (through.sqrMagnitude > 1e-6f) to = through.normalized;
+                    }
+                }
+
+                dir = to;
+                return true;
+            }
+
+            if (j == null || j.armYaw.Length == 0) return false;
             int arm = j.armOfNeighbour[n];
             // Le bras suit le TANGAGE du noeud, il ne sort plus a plat. C'est ce qui rend une
             // rampe droite droite : sans ca la spline part horizontale et doit remonter en S
@@ -1697,7 +1873,10 @@ namespace Gameplay.City
         private void BuildSegment(Transform root, int k)
         {
             Transform existing = root.Find("Seg_" + k);
-            if (!tile.valid || !SegmentSpline(k, out Spline spline))
+            // La tuile n'est requise que pour une ROUTE : escalier et egout sont generes de
+            // toutes pieces, ils n'ont pas a mourir parce qu'un FBX manque.
+            bool needsTile = segments[k].kind == SegmentKind.Route;
+            if ((needsTile && !tile.valid) || !SegmentSpline(k, out Spline spline))
             {
                 if (existing != null) { DestroyChildren(existing); DestroyImmediate(existing.gameObject); }
                 return;
@@ -1721,17 +1900,38 @@ namespace Gameplay.City
             }
             go.transform.localPosition = Vector3.up * SurfaceY;
 
-            var deck = new RoadMeshWarp.Deck
+            var deck = default(RoadMeshWarp.Deck);
+            Mesh mesh;
+            switch (segments[k].kind)
             {
-                fascia = Mathf.Max(0f, deckFascia),
-                parapet = IsOverpass(spline) ? Mathf.Max(0f, parapetHeight) : 0f,
-                parapetBase = SidewalkHeight
-            };
+                case SegmentKind.Escalier:
+                    mesh = RoadMeshWarp.Stairs(spline, mf.sharedMesh, stairWidth * 0.5f,
+                                               stairRiser, stairSkirt);
+                    break;
 
-            bool fine = Curves(spline);
-            Mesh mesh = RoadMeshWarp.Warp(fine ? tileFine : tile, spline, mf.sharedMesh, deck,
-                                          fine ? variantsFine : variants,
-                                          TilePicks(k, spline, deck.parapet > 0.001f));
+                // La spline porte le FOND du canal. L'auteur descend donc ses noeuds a la
+                // profondeur qu'il veut : la levre remonte toute seule de `egoutDepth` par
+                // -dessus, et c'est elle qui doit affleurer le terrain.
+                case SegmentKind.Egout:
+                    mesh = RoadMeshWarp.Channel(spline, mf.sharedMesh, egoutHalfWidth, egoutDepth,
+                                                egoutWall, egoutLip,
+                                                !Continues(k, segments[k].a, SegmentKind.Egout),
+                                                !Continues(k, segments[k].b, SegmentKind.Egout));
+                    break;
+
+                default:
+                    deck = new RoadMeshWarp.Deck
+                    {
+                        fascia = Mathf.Max(0f, deckFascia),
+                        parapet = IsOverpass(spline) ? Mathf.Max(0f, parapetHeight) : 0f,
+                        parapetBase = SidewalkHeight
+                    };
+                    bool fine = Curves(spline);
+                    mesh = RoadMeshWarp.Warp(fine ? tileFine : tile, spline, mf.sharedMesh, deck,
+                                             fine ? variantsFine : variants,
+                                             TilePicks(k, spline, deck.parapet > 0.001f));
+                    break;
+            }
             if (mesh == null) { DestroyChildren(go.transform); DestroyImmediate(go); return; }
             mesh.name = "RoadSeg_" + k;
             mesh.hideFlags = HideFlags.DontSave;
@@ -1749,7 +1949,50 @@ namespace Gameplay.City
             // Les piles sont des objets a part et pas des sommets du tablier : elles ont besoin
             // de la hauteur du SOL sous chaque point, que le warp ignore, et un cube portant son
             // BoxCollider donne la collision gratuitement (on peut se planter dedans).
-            BuildPiers(go.transform, spline, deck);
+            //
+            // Routes uniquement : un escalier porte deja ses joues jusqu'au sol, et un egout est
+            // par definition enfonce dedans.
+            if (segments[k].kind == SegmentKind.Route) BuildPiers(go.transform, spline, deck);
+            else for (int c = go.transform.childCount - 1; c >= 0; c--)
+                if (go.transform.GetChild(c).name.StartsWith(PierName))
+                    DestroyImmediate(go.transform.GetChild(c).gameObject);
+        }
+
+        private int FindSegment(int a, int b)
+        {
+            for (int i = 0; i < segments.Count; i++)
+                if ((segments[i].a == a && segments[i].b == b) ||
+                    (segments[i].a == b && segments[i].b == a)) return i;
+            return -1;
+        }
+
+        // L'UNIQUE autre trace de meme nature partant de ce noeud, ou -1. Rend -1 aussi s'il y en
+        // a plusieurs : a trois branches il n'existe pas de tangente traversante, et en inventer
+        // une donnerait un raccord faux plutot qu'un raccord franc.
+        private int SoleOther(int self, int node, SegmentKind kind)
+        {
+            int found = -1;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (i == self || segments[i].kind != kind) continue;
+                if (segments[i].a != node && segments[i].b != node) continue;
+                if (found >= 0) return -1;
+                found = i;
+            }
+            return found;
+        }
+
+        // Un autre trace de MEME NATURE part-il de ce noeud ? Sert a savoir si un bout d'egout
+        // est une bouche (a boucher) ou une simple jonction entre deux troncons (a laisser
+        // ouverte).
+        private bool Continues(int k, int node, SegmentKind kind)
+        {
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (i == k || segments[i].kind != kind) continue;
+                if (segments[i].a == node || segments[i].b == node) return true;
+            }
+            return false;
         }
 
         // Un segment est un OUVRAGE des qu'il passe franchement au-dessus du sol. Meme seuil que

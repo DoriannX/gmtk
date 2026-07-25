@@ -385,16 +385,24 @@ namespace Gameplay.City
         // Par raycast et non par calcul : il faut interroger TOUTES les routes a cet endroit, pas
         // la plus proche, et la geometrie deja posee sait repondre. Les marges evitent d'attraper
         // le tablier qu'on porte et le sol sur lequel on pose.
-        private bool Obstructed(Vector3 world, float top, float ground)
+        private bool Obstructed(Vector3 world, float top, float ground, float halfSide)
         {
             const float Margin = 0.25f;
             float from = top - Margin, to = ground + Margin;
             if (from <= to) return false;
 
-            var hits = Physics.RaycastAll(new Vector3(world.x, from, world.z), Vector3.down,
-                                          from - to, ~0, QueryTriggerInteraction.Ignore);
-            foreach (var hit in hits)
-                if (hit.collider.transform.IsChildOf(transform)) return true;
+            // Les quatre coins en plus de l'axe : une pile de 1,2 m de cote peut manquer de peu
+            // une chaussee avec son axe et la traverser quand meme par un coin.
+            for (int c = 0; c < 5; c++)
+            {
+                float ox = c == 0 ? 0f : (c == 1 || c == 2 ? -halfSide : halfSide);
+                float oz = c == 0 ? 0f : (c == 1 || c == 3 ? -halfSide : halfSide);
+                var hits = Physics.RaycastAll(new Vector3(world.x + ox, from, world.z + oz),
+                                              Vector3.down, from - to, ~0,
+                                              QueryTriggerInteraction.Ignore);
+                foreach (var hit in hits)
+                    if (hit.collider.transform.IsChildOf(transform)) return true;
+            }
             return false;
         }
 
@@ -425,12 +433,24 @@ namespace Gameplay.City
 
                 Vector3 w = NodeWorld(i);
                 float ground = GroundUnder(w);
-                float top = w.y + tile.bottom - deck.fascia + SurfaceY;
+                float side = Mathf.Max(pierSize, JunctionRadius(i) * 0.5f);
+                float halfSide = side * 0.5f;
+
+                // Le carrefour est COUCHE dans la pente : le dessous de son bord bas est
+                // nettement sous son centre. Le sommet de la pile se cale donc sur le plus BAS
+                // de ses quatre coins -- cale sur le centre, elle ressortait en plein bitume.
+                float surf = float.MaxValue;
+                for (int c = 0; c < 4; c++)
+                {
+                    float ox = (c == 0 || c == 1) ? -halfSide : halfSide;
+                    float oz = (c == 0 || c == 2) ? -halfSide : halfSide;
+                    surf = Mathf.Min(surf, JunctionSurfaceY(i, new Vector3(w.x + ox, 0f, w.z + oz)));
+                }
+
+                float top = surf - SidewalkHeight + tile.bottom - deck.fascia;
                 float h = top - ground;
                 if (h < 1f) continue;
-                if (Obstructed(w, top, ground)) continue;
-
-                float side = Mathf.Max(pierSize, JunctionRadius(i) * 0.5f);
+                if (Obstructed(w, top, ground, halfSide)) continue;
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 pier.name = JunctionPier + i;
                 pier.hideFlags = GenFlags;
@@ -1468,17 +1488,29 @@ namespace Gameplay.City
             if (count < 1) return;
 
             float deckBottom = tile.bottom - deck.fascia;
+            float halfSide = pierSize * 0.5f;
             for (int i = 1; i <= count; i++)
             {
-                Vector3 local = SplinePoint(spline, (float)i / (count + 1));
+                float t = (float)i / (count + 1);
+                Vector3 local = SplinePoint(spline, t);
                 Vector3 world = transform.TransformPoint(local);
                 float ground = GroundUnder(world);
-                float top = world.y + deckBottom + SurfaceY;
+
+                // Le tablier est en PENTE : son dessous a l'aplomb du bord amont de la pile est
+                // plus bas qu'a son axe. Sans ce minimum sur l'emprise, le coin de la pile
+                // ressort a travers la chaussee. Le devers, lui, est nul (la tuile reste plate en
+                // travers), deux echantillons le long de l'axe suffisent.
+                float dt = halfSide / Mathf.Max(1f, len);
+                float lowest = Mathf.Min(world.y,
+                    Mathf.Min(transform.TransformPoint(SplinePoint(spline, Mathf.Clamp01(t - dt))).y,
+                              transform.TransformPoint(SplinePoint(spline, Mathf.Clamp01(t + dt))).y));
+
+                float top = lowest + deckBottom + SurfaceY;
                 float h = top - ground;
                 // Sous cette hauteur la pile serait un caillou coince entre le sol et le tablier :
                 // c'est le cas des abords d'ouvrage, ou le remblai monte deja chercher la route.
                 if (h < 1f) continue;
-                if (Obstructed(world, top, ground)) continue;
+                if (Obstructed(world, top, ground, halfSide)) continue;
 
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 pier.name = PierName + i;

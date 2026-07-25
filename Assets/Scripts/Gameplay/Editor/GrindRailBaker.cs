@@ -18,11 +18,31 @@ namespace Gameplay.EditorTools
         // --- filtres (tuning au bake, stable, pas par-frame) ---
         const float Weld = 0.01f;          // fusion des sommets a la meme position (m)
         const float MinLen = 0.4f;         // arete plus courte -> ignoree
+        // Longueur mini d'un rail UNE FOIS CHAINE. Le filtre par arete ne peut pas faire ce
+        // travail : la deformation de route decoupe la bordure tous les ~1 m, donc un vrai
+        // trottoir arrive ici en aretes aussi courtes qu'un pointille de ligne blanche. Ce qui
+        // les separe, c'est qu'une bordure CHAINE sur des dizaines de metres et qu'un pointille
+        // reste seul a 0.8 m. Sans ce filtre : 234 rails en pleine chaussee sur une seule rue,
+        // et la moto grinde sur le marquage au sol.
+        const float MinRail = 2.5f;
         const float HorizMax = 0.72f;      // |dir.y| au-dela -> trop pentu (ignore). 0.72 = jusqu'a ~45deg : rampes + rambardes d'escalier grindables (un rail penche reste un rail)
         const float DihedralMin = 22f;     // angle mini entre faces (deg) : sous ca = surface plate
         const float TopTol = 0.05f;        // un sommet voisin au-dessus de l'arete de + que ca -> pas un rebord du haut
+        const float MinStep = 0.06f;       // marche mini sous l'arete : bordure 0.27, peinture 0.02
         const float ChainAngle = 35f;      // continuite pour chainer 2 aretes en une polyligne (deg)
         const float SimplifyAngle = 6f;    // fusionne les sommets quasi-alignes d'une polyligne (deg)
+
+        // Tous les MeshFilter de la scene, DESCENDUS DEPUIS LES RACINES et pas via
+        // FindObjectsByType : ce dernier ignore les objets marques DontSave, or c'est
+        // exactement le cas de la geometrie generee par RoadNetwork ("Generated"). Resultat
+        // avant correction : pas un seul rail sur une route, un pont ou une rampe -- le baker
+        // ne voyait que le sol et les batiments peints.
+        static IEnumerable<MeshFilter> SceneMeshes()
+        {
+            foreach (var root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+                foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
+                    yield return mf;
+        }
 
         [MenuItem("Tools/Grind/Bake Rails")]
         public static void Bake()
@@ -32,7 +52,7 @@ namespace Gameplay.EditorTools
             int nextId = 0;
 
             int meshCount = 0;
-            foreach (var mf in Object.FindObjectsByType<MeshFilter>(FindObjectsSortMode.None))
+            foreach (var mf in SceneMeshes())
             {
                 var mesh = mf.sharedMesh;
                 if (mesh == null || !mesh.isReadable) continue;
@@ -83,6 +103,13 @@ namespace Gameplay.EditorTools
                     maxRel = Mathf.Max(maxRel, rel); minRel = Mathf.Min(minRel, rel);
                 }
                 if (maxRel > TopTol) continue;
+
+                // Il faut une vraie MARCHE sous l'arete. Sans ca, le marquage peint est un
+                // rebord du haut parfaitement valide : il depasse de 2 cm, rien au-dessus,
+                // angle vif sur les bords. Une bordure de trottoir plonge de 27 cm, un
+                // pointille de 2 -- le seuil passe franchement entre les deux. C'est ce qui
+                // evite de grinder sur la peinture au milieu d'un carrefour.
+                if (minRel > -MinStep) continue;
 
                 // VRAIE ARETE : soit un pli marque entre 2 faces (on prend le MEILLEUR couple, sinon
                 // un couple coplanaire malchanceux masquait l'arete), soit une arete de BORD (1 seule
@@ -172,7 +199,115 @@ namespace Gameplay.EditorTools
                 var arr = Simplify(new List<Vector3>(pts));
                 if (arr.Count >= 2) result.Add(new GrindRailNetwork.Path { points = arr.ToArray() });
             }
+
+            // Le filtre de longueur passe APRES le recollage : un morceau de 2 m isole est du
+            // bruit, mais le meme morceau recolle a ses voisins fait une bordure de 70 m.
+            var joined = new List<GrindRailNetwork.Path>();
+            foreach (var p in Join(result))
+                if (Length(new List<Vector3>(p.points)) >= MinRail) joined.Add(p);
+            return joined;
+        }
+
+        // RECOLLAGE des rails alignes separes par un petit trou.
+        //
+        // Le trottoir du kit est DALLE : un joint transversal de 2 cm tous les 3.9 m. La
+        // bordure est donc geometriquement interrompue a chaque dalle, la soudure de 1 cm ne
+        // franchit pas le joint, et une rue de 70 m ressort en 18 rails de 3.9 m. Le grind
+        // decroche a chaque dalle -- c'est le vrai defaut, il existait avant la decoupe des
+        // tuiles et n'a rien a voir avec elle.
+        //
+        // On recolle donc deux rails dont les extremites se touchent a JoinGap pres, a trois
+        // conditions d'alignement : les deux directions entre elles, et chacune avec le trou.
+        // C'est cette derniere qui empeche de coudre deux bordures PARALLELES separees de
+        // quelques centimetres -- leur trou est perpendiculaire a leur direction.
+        const float JoinGap = 0.35f;       // trou max comble (m). Un joint de dalle fait 0.02.
+
+        private static List<GrindRailNetwork.Path> Join(List<GrindRailNetwork.Path> rails)
+        {
+            int n = rails.Count;
+            var used = new bool[n];
+            var byCell = new Dictionary<Vector3Int, List<int>>();
+            Vector3Int C(Vector3 p) => new Vector3Int(
+                Mathf.FloorToInt(p.x / JoinGap), Mathf.FloorToInt(p.y / JoinGap), Mathf.FloorToInt(p.z / JoinGap));
+            void Reg(Vector3 p, int idx)
+            {
+                var k = C(p);
+                if (!byCell.TryGetValue(k, out var l)) { l = new List<int>(); byCell[k] = l; }
+                l.Add(idx);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                Reg(rails[i].points[0], i);
+                Reg(rails[i].points[rails[i].points.Length - 1], i);
+            }
+
+            var result = new List<GrindRailNetwork.Path>();
+            for (int i = 0; i < n; i++)
+            {
+                if (used[i]) continue;
+                used[i] = true;
+                var pts = new List<Vector3>(rails[i].points);
+                ExtendRail(pts, rails, used, byCell, C, true);
+                pts.Reverse();
+                ExtendRail(pts, rails, used, byCell, C, true);
+                result.Add(new GrindRailNetwork.Path { points = pts.ToArray() });
+            }
             return result;
+        }
+
+        // Prolonge `pts` par son extremite de fin, tant qu'un rail libre s'y raccorde.
+        private static void ExtendRail(List<Vector3> pts, List<GrindRailNetwork.Path> rails,
+            bool[] used, Dictionary<Vector3Int, List<int>> byCell,
+            System.Func<Vector3, Vector3Int> C, bool _)
+        {
+            while (true)
+            {
+                Vector3 end = pts[pts.Count - 1];
+                Vector3 dir = (end - pts[pts.Count - 2]).normalized;
+                var cell = C(end);
+                int best = -1; bool bestReversed = false; float bestScore = ChainAngle;
+
+                for (int dx = -1; dx <= 1; dx++)
+                for (int dy = -1; dy <= 1; dy++)
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    if (!byCell.TryGetValue(cell + new Vector3Int(dx, dy, dz), out var list)) continue;
+                    foreach (int k in list)
+                    {
+                        if (used[k]) continue;
+                        var q = rails[k].points;
+                        for (int side = 0; side < 2; side++)
+                        {
+                            Vector3 head = side == 0 ? q[0] : q[q.Length - 1];
+                            Vector3 nextPt = side == 0 ? q[1] : q[q.Length - 2];
+                            Vector3 gap = head - end;
+                            if (gap.magnitude > JoinGap) continue;
+
+                            Vector3 outDir = (head - nextPt).normalized;   // direction du rail candidat
+                            float a = Vector3.Angle(dir, -outDir);
+                            if (a >= bestScore) continue;
+                            // le trou lui-meme doit suivre la direction : sinon on coud deux
+                            // bordures paralleles cote a cote.
+                            if (gap.sqrMagnitude > 1e-6f && Vector3.Angle(dir, gap.normalized) > ChainAngle) continue;
+
+                            bestScore = a; best = k; bestReversed = side != 0;
+                        }
+                    }
+                }
+
+                if (best < 0) return;
+                used[best] = true;
+                var add = new List<Vector3>(rails[best].points);
+                if (bestReversed) add.Reverse();
+                pts.AddRange(add);
+            }
+        }
+
+        private static float Length(List<Vector3> pts)
+        {
+            float s = 0f;
+            for (int i = 0; i < pts.Count - 1; i++) s += Vector3.Distance(pts[i], pts[i + 1]);
+            return s;
         }
 
         // Etend la polyligne depuis une extremite en accrochant un segment contigu + ~aligne.

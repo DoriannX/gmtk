@@ -45,6 +45,8 @@ namespace Gameplay
             ApplyVisibility(true);   // pas de tween au demarrage : on est deja a la bonne taille
         }
 
+        public QuestZone Target => target;
+
         // Change de cible a chaud (le script de quete s'en sert). null = la fleche se range.
         public void SetTarget(QuestZone z)
         {

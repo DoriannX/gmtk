@@ -18,10 +18,18 @@ namespace Gameplay
         [SerializeField] private float minPitch = -10f;
         [SerializeField] private float maxPitch = 70f;
 
+        [Header("Collision")]
+        [SerializeField] private LayerMask blockers = ~0;
+        [SerializeField] private float probeRadius = 0.35f; // rayon du balayage, evite de raser les angles
+        [SerializeField] private float minDistance = 1.6f;  // en deca on est dans le joueur
+        [SerializeField] private float returnSpeed = 8f;    // m/s pour ressortir, en m/s
+
         private float yaw;
         private float pitch = 20f;
         private float shakeAmplitude;
         private float shakeTimer;
+        private float currentDistance;
+        private readonly RaycastHit[] hits = new RaycastHit[8];
 
         // Secousse ponctuelle (boost, impacts). Decroit lineairement sur la duree.
         public void Shake(float amplitude, float duration)
@@ -34,6 +42,7 @@ namespace Gameplay
         {
             if (target != null)
                 yaw = target.eulerAngles.y;
+            currentDistance = distance;
             LockCursor(true);
         }
 
@@ -61,7 +70,9 @@ namespace Gameplay
 
             Vector3 pivot = target.position + Vector3.up * height;
             Quaternion orbit = Quaternion.Euler(pitch, yaw, 0f);
-            transform.position = pivot + orbit * (Vector3.back * distance);
+            Vector3 dir = orbit * Vector3.back;
+
+            transform.position = pivot + dir * Distance(pivot, dir);
             transform.LookAt(pivot);
 
             if (shakeTimer > 0f)
@@ -76,6 +87,33 @@ namespace Gameplay
                 transform.position += transform.rotation * offset;
                 if (shakeTimer <= 0f) shakeAmplitude = 0f;
             }
+        }
+
+        // Distance reelle de la camera : on balaie une sphere du pivot vers la
+        // position voulue et on s'arrete au premier decor rencontre. Rentrer est
+        // immediat (sinon la camera passe une frame DANS le mur), ressortir est
+        // amorti (sinon elle claque des qu'on frole un poteau).
+        private float Distance(Vector3 pivot, Vector3 dir)
+        {
+            float wanted = distance;
+
+            int count = Physics.SphereCastNonAlloc(pivot, probeRadius, dir, hits, distance,
+                                                   blockers, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < count; i++)
+            {
+                // Les colliders du joueur englobent le pivot : sans ce filtre la
+                // camera se collerait a lui en permanence. Un contact demarre a
+                // l'interieur ressort d'ailleurs avec distance 0.
+                if (hits[i].distance <= 0f) continue;
+                if (hits[i].transform.IsChildOf(target)) continue;
+                wanted = Mathf.Min(wanted, hits[i].distance);
+            }
+
+            wanted = Mathf.Max(minDistance, wanted);
+            currentDistance = wanted < currentDistance
+                ? wanted
+                : Mathf.MoveTowards(currentDistance, wanted, returnSpeed * Time.deltaTime);
+            return currentDistance;
         }
 
         private void HandleCursorToggle()

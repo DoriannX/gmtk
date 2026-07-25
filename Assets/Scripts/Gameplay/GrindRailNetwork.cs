@@ -49,6 +49,14 @@ namespace Gameplay
             }
         }
 
+        // Ajoute une polyligne a chaud (utilise par GrindRail, les rails poses a la main).
+        public void AddPath(Vector3[] points)
+        {
+            if (points == null || points.Length < 2) return;
+            paths.Add(new Path { points = points });
+            Build();
+        }
+
         private void RasterizeToGrid(Vector3 a, Vector3 b, int segIdx)
         {
             float d = Vector3.Distance(a, b);

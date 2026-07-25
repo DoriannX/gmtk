@@ -47,6 +47,18 @@ namespace Gameplay
         private float window;
         public int Total { get; private set; }
 
+        // Etat de chaine expose pour le HUD : la chaine est le 3e compteur du jeu, il faut
+        // pouvoir la dessiner en compte a rebours. window ne descend qu'AU SOL (cf Update) ->
+        // en l'air la fenetre reste pleine, ce qui est le comportement voulu.
+        public bool ChainAlive => chainScore > 0;
+        public float ComboWindow01 => chainScore > 0 && comboWindow > 0f ? Mathf.Clamp01(window / comboWindow) : 0f;
+        public int ComboCount => comboCount;
+        public int ChainScore => chainScore;
+
+        // Records de la run, pour l'ecran de fin.
+        public int BestCombo { get; private set; }
+        public float BestGrind { get; private set; }
+
         private void Awake()
         {
             car = GetComponent<ArcadeCarController>();
@@ -134,7 +146,10 @@ namespace Gameplay
                 wasRail = false;
                 hud.ClearLive();
                 if (grindDist >= grindMinDist)
+                {
+                    if (grindDist > BestGrind) BestGrind = grindDist;
                     AwardChain($"GRIND {Mathf.RoundToInt(grindDist)}m", Mathf.RoundToInt(grindDist * grindPtsPerMeter));
+                }
                 grindDist = 0f;
             }
         }
@@ -154,14 +169,27 @@ namespace Gameplay
             }
         }
 
-        private void AwardChain(string label, int basePts, bool landed = false)
+        // Public : les livraisons alimentent la MEME chaine que les figures (cf DeliveryQuest).
+        // Livrer en plein combo vaut donc jusqu'a x10, et relance la fenetre -> la ligne parfaite
+        // est un seul combo qui traverse la ville EN livrant.
+        public void AwardChain(string label, int basePts, bool landed = false)
         {
+            if (basePts <= 0) return;
             comboCount++;
             int mult = Mathf.Clamp(comboCount, 1, maxMultiplier);
             int pts = basePts * mult;
             chainScore += pts;
             window = comboWindow;
+            if (comboCount > BestCombo) BestCombo = comboCount;
             hud.ScorePop(label, pts, mult, landed);
+        }
+
+        // Banque immediatement ce qui est en cours. Sert de derniere chance : les points d'une
+        // livraison n'arrivent dans la jauge qu'au Bank(), mourir pendant cette fenetre alors
+        // qu'on vient de livrer serait vole (cf RunEnd).
+        public void ForceBank()
+        {
+            if (chainScore > 0) Bank();
         }
 
         private void Bank()

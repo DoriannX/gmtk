@@ -375,6 +375,29 @@ namespace Gameplay.City
             RebuildPiers();
         }
 
+        // Une autre route passe-t-elle entre le tablier et le sol, a l'aplomb de la pile ?
+        //
+        // Une pile qui descend en droite ligne traverse alors la chaussee du dessous -- c'est le
+        // cas classique de l'echangeur, un ouvrage en enjambe un autre. On renonce a CETTE pile :
+        // ses voisines, tous les 14 m, portent la travee, et une portee un peu plus longue est
+        // exactement ce que ferait un vrai ouvrage au-dessus d'une route.
+        //
+        // Par raycast et non par calcul : il faut interroger TOUTES les routes a cet endroit, pas
+        // la plus proche, et la geometrie deja posee sait repondre. Les marges evitent d'attraper
+        // le tablier qu'on porte et le sol sur lequel on pose.
+        private bool Obstructed(Vector3 world, float top, float ground)
+        {
+            const float Margin = 0.25f;
+            float from = top - Margin, to = ground + Margin;
+            if (from <= to) return false;
+
+            var hits = Physics.RaycastAll(new Vector3(world.x, from, world.z), Vector3.down,
+                                          from - to, ~0, QueryTriggerInteraction.Ignore);
+            foreach (var hit in hits)
+                if (hit.collider.transform.IsChildOf(transform)) return true;
+            return false;
+        }
+
         // Repose toutes les piles, sans toucher aux meshes. Passe separee et pas un bout de
         // BuildSegment : pendant un drag les piles sont sautees (creer et detruire des cubes a
         // chaque frame n'a pas de sens), il faut donc un endroit qui rattrape a la fin.
@@ -405,6 +428,7 @@ namespace Gameplay.City
                 float top = w.y + tile.bottom - deck.fascia + SurfaceY;
                 float h = top - ground;
                 if (h < 1f) continue;
+                if (Obstructed(w, top, ground)) continue;
 
                 float side = Mathf.Max(pierSize, JunctionRadius(i) * 0.5f);
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -1454,6 +1478,7 @@ namespace Gameplay.City
                 // Sous cette hauteur la pile serait un caillou coince entre le sol et le tablier :
                 // c'est le cas des abords d'ouvrage, ou le remblai monte deja chercher la route.
                 if (h < 1f) continue;
+                if (Obstructed(world, top, ground)) continue;
 
                 var pier = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 pier.name = PierName + i;

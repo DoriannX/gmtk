@@ -127,10 +127,16 @@ namespace Gameplay.EditorTools
 
             // Les routes se posent sur le relief AVANT que le sol ne soit calcule : le sol se
             // raccorde a leur surface, donc l'ordre inverse le ferait viser des hauteurs perimees.
+            // Les jalons d'UNDO ne sont poses que pour une generation DEMANDEE (le menu). Une
+            // regeneration AUTOMATIQUE n'empile rien, et c'est important : le sol est du contenu
+            // entierement derive, mais tant qu'il apparaissait dans la pile d'annulation, le
+            // premier Ctrl+Z apres une edition annulait "Generer le sol" au lieu de l'edition.
+            // Pire, ca restaurait l'ancien maillage -- donc l'ecran montrait le resultat attendu
+            // pendant que la donnee, elle, n'avait pas bougé.
             var terrain = CityTerrain.Find();
             foreach (var net in nets)
             {
-                Undo.RecordObject(net, "Poser les routes sur le relief");
+                if (select) Undo.RecordObject(net, "Poser les routes sur le relief");
                 if (net.LayOnTerrain(terrain))
                     EditorUtility.SetDirty(net);
             }
@@ -138,16 +144,24 @@ namespace Gameplay.EditorTools
             var mesh = BuildMesh(nets, terrain, all, roads, groundY);
             CaptureLive(mesh, nets, terrain, groundY);
 
-            Undo.IncrementCurrentGroup();
-            int group = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName("Generer le sol");
+            int group = -1;
+            if (select)
+            {
+                Undo.IncrementCurrentGroup();
+                group = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Generer le sol");
+            }
 
             GameObject old = Find();
-            if (old != null) Undo.DestroyObjectImmediate(old);
+            if (old != null)
+            {
+                if (select) Undo.DestroyObjectImmediate(old);
+                else Object.DestroyImmediate(old);
+            }
 
             var go = new GameObject(ObjectName, typeof(MeshFilter), typeof(MeshRenderer),
                                     typeof(MeshCollider));
-            Undo.RegisterCreatedObjectUndo(go, "Generer le sol");
+            if (select) Undo.RegisterCreatedObjectUndo(go, "Generer le sol");
             go.transform.position = Vector3.zero;
             Material shared = EnsureMaterial(nets);
             go.GetComponent<MeshFilter>().sharedMesh = mesh;
@@ -160,7 +174,7 @@ namespace Gameplay.EditorTools
             GameObjectUtility.SetStaticEditorFlags(go,
                 StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccludeeStatic);
 
-            Undo.CollapseUndoOperations(group);
+            if (group >= 0) Undo.CollapseUndoOperations(group);
             EditorSceneManager.MarkSceneDirty(go.scene);
             if (!select) return;
 

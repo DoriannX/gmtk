@@ -109,7 +109,7 @@ namespace Gameplay.EditorTools
         }
 
         // A appeler apres toute ecriture volontaire, pour que l'empreinte de reference suive.
-        private static void Stamp(CityTerrain terrain)
+        internal static void Stamp(CityTerrain terrain)
         {
             if (terrain.sculpt != null) stamps[terrain.sculpt] = terrain.sculpt.Checksum();
         }

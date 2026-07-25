@@ -43,6 +43,20 @@ namespace Gameplay.City
             return values;
         }
 
+        // Remet toute la couche a plat. Le bruit procedural de CityTerrain n'est pas concerne :
+        // les deux sont des couches independantes qui s'additionnent.
+        public void Clear() => data = new byte[Count * 4];
+
+        // Nombre de cellules reellement peintes. Meme seuil que SculptBounds : un residu d'un
+        // millimetre laisse par un effacement ne compte pas comme du relief.
+        public int PaintedCount()
+        {
+            var v = Read();
+            int n = 0;
+            for (int i = 0; i < v.Length; i++) if (Mathf.Abs(v[i]) > 0.02f) n++;
+            return n;
+        }
+
         // Empreinte du contenu. Sert a l'editeur pour savoir si une annulation a touche a cette
         // couche : sans elle, il faudrait regenerer le sol a CHAQUE Ctrl+Z du projet, y compris
         // pour un deplacement d'objet qui n'a rien a voir. Balayage complet et pas echantillonne :

@@ -250,6 +250,7 @@ namespace Gameplay
         // complete et l'atterrissage valide.
         public float AirSpinDeg { get; private set; }
         public float AirFlipDeg { get; private set; }
+        public float AirRollDeg { get; private set; }
         private Quaternion airRotPrev = Quaternion.identity; // orientation du corps au tick precedent (pour integrer la rotation aerienne)
         // Vrai quand le joueur pilote activement une figure en l'air (Shift maintenu).
         public bool DoingTrick { get; private set; }
@@ -567,7 +568,7 @@ namespace Gameplay
             }
             if (wasGrounded && !grounded)
             {
-                AirSpinDeg = AirFlipDeg = 0f;
+                AirSpinDeg = AirFlipDeg = AirRollDeg = 0f;
                 airRotPrev = rb.rotation; // reference de rotation au decollage
             }
             wasGrounded = grounded;
@@ -797,6 +798,10 @@ namespace Gameplay
                     Vector3 rv = axis * ang;
                     AirSpinDeg += Vector3.Dot(rv, transform.up);
                     if (IsPlayer && Input.TrickHeld) AirFlipDeg += Vector3.Dot(rv, transform.right);
+                    // ROLL (tonneau, axe avant) : aucun input ne le produit, il vient des rampes
+                    // et de la physique -> compte TOUJOURS, comme le spin. Un tour complet en
+                    // l'air ne peut pas arriver par accident.
+                    AirRollDeg += Vector3.Dot(rv, transform.forward);
                 }
             }
             airRotPrev = rb.rotation;

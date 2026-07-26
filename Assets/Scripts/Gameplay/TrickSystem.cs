@@ -14,14 +14,14 @@ namespace Gameplay
         [SerializeField] private float turnPerTrick = 320f;   // deg par tour valide (< 360 = indulgent)
         [SerializeField] private float uprightDot = 0.5f;     // up.monde mini pour "sur les roues"
         [SerializeField] private float comboWindow = 2.6f;    // temps au sol sans figure avant de banquer
-        [SerializeField] private float bigAirTime = 0.9f;     // airtime mini pour bonus GROS SAUT
         [SerializeField] private float driftMinTime = 0.7f;   // duree mini de glisse pour un DRIFT
         [SerializeField] private int maxMultiplier = 10;
 
         [Header("Points de base")]
         [SerializeField] private int spinPts = 250;
         [SerializeField] private int flipPts = 450;
-        [SerializeField] private int bigAirPtsPerSec = 260;
+        [SerializeField] private int rollPts = 450;
+        [SerializeField] private int mixedPts = 500;   // vrille (rotation partagee entre axes)
 
         [Header("Grind")]
         [SerializeField] private int grindPtsPerMeter = 8;  // points par metre glisse (score = DISTANCE, pas temps)
@@ -29,6 +29,8 @@ namespace Gameplay
 
         private static readonly Color SpinCol = new Color(0.35f, 0.8f, 1f);
         private static readonly Color FlipCol = new Color(1f, 0.55f, 0.2f);
+        private static readonly Color RollCol = new Color(0.6f, 1f, 0.4f);
+        private static readonly Color MixCol = new Color(1f, 0.9f, 0.3f);
         private static readonly Color GrindCol = new Color(1f, 0.45f, 0.85f);
 
         private float grindDist;
@@ -39,7 +41,7 @@ namespace Gameplay
 
         private bool airborne;
         private float airTime;
-        private int shownSpins, shownFlips;
+        private int shownSpins, shownFlips, shownRolls, shownMixed;
 
         private float driftTime, driftAccum;
 
@@ -92,7 +94,7 @@ namespace Gameplay
         {
             airborne = true;
             airTime = 0f;
-            shownSpins = shownFlips = 0;
+            shownSpins = shownFlips = shownRolls = shownMixed = 0;
         }
 
         // Affichage temps reel : des qu'un tour de plus est boucle, le slap escalade.
@@ -102,6 +104,23 @@ namespace Gameplay
             int flips = Mathf.FloorToInt(Mathf.Abs(car.AirFlipDeg) / turnPerTrick);
             if (spins >= 1 && spins != shownSpins) { shownSpins = spins; hud.SetLive("spin", SpinLabel(spins, car.AirSpinDeg), SpinCol, true); }
             if (flips >= 1 && flips != shownFlips) { shownFlips = flips; hud.SetLive("flip", FlipLabel(flips, car.AirFlipDeg), FlipCol, true); }
+            int rolls = Mathf.FloorToInt(Mathf.Abs(car.AirRollDeg) / turnPerTrick);
+            if (rolls >= 1 && rolls != shownRolls) { shownRolls = rolls; hud.SetLive("roll", Tier("BARREL ROLL", rolls), RollCol, true); }
+            int mixed = MixedTurns(spins, flips, rolls);
+            // ">" et pas "!=" : mixed REDESCEND quand un axe finit par boucler son tour
+            // (il est alors facture par cet axe) -> pas de re-punch a la baisse.
+            if (mixed > shownMixed) { shownMixed = mixed; hud.SetLive("mix", Tier("CORKSCREW", mixed), MixCol, true); }
+        }
+
+        // VRILLE : une figure en diagonale partage sa rotation entre les axes -> chaque axe
+        // reste sous le tour complet et NE COMPTE PAS, alors que la caisse a bien tourne.
+        // On mesure donc aussi le total des 3 axes : les tours cumules que les axes n'ont pas
+        // deja factures sont des CORKSCREW. floor(a+b+c) >= floor(a)+floor(b)+floor(c) ->
+        // jamais negatif, et un saut mono-axe ne compte jamais deux fois.
+        private int MixedTurns(int spins, int flips, int rolls)
+        {
+            float total = (Mathf.Abs(car.AirSpinDeg) + Mathf.Abs(car.AirFlipDeg) + Mathf.Abs(car.AirRollDeg)) / turnPerTrick;
+            return Mathf.FloorToInt(total) - (spins + flips + rolls);
         }
 
         private void Land()
@@ -111,11 +130,11 @@ namespace Gameplay
 
             int spins = Mathf.FloorToInt(Mathf.Abs(car.AirSpinDeg) / turnPerTrick);
             int flips = Mathf.FloorToInt(Mathf.Abs(car.AirFlipDeg) / turnPerTrick);
-            bool bigAir = airTime > bigAirTime;
+            int rolls = Mathf.FloorToInt(Mathf.Abs(car.AirRollDeg) / turnPerTrick);
 
             // Pas sur les roues apres un VRAI saut -> RATE, chaine perdue. Independant
-            // d'une figure complete : un demi-flip qui finit sur la tete est un crash,
-            // pas un "gros saut". airTime mini -> ignore les micro-bosses de suspension.
+            // d'une figure complete : un demi-flip qui finit sur la tete est un crash.
+            // airTime mini -> ignore les micro-bosses de suspension.
             if (car.LandUprightDot < uprightDot && airTime > 0.25f)
             {
                 hud.Wasted();
@@ -123,11 +142,12 @@ namespace Gameplay
                 return;
             }
 
-            int jump = spins * spinPts + flips * flipPts;
-            if (bigAir) jump += Mathf.RoundToInt(airTime * bigAirPtsPerSec);
-            if (jump <= 0) return; // simple saut sans rien : pas de score
+            int mixed = MixedTurns(spins, flips, rolls);
 
-            AwardChain(Summary(spins, flips, bigAir, car.AirSpinDeg, car.AirFlipDeg), jump, true);
+            int jump = spins * spinPts + flips * flipPts + rolls * rollPts + mixed * mixedPts;
+            if (jump <= 0) return; // simple saut sans figure : pas de score
+
+            AwardChain(Summary(spins, flips, rolls, mixed, car.AirSpinDeg, car.AirFlipDeg), jump, true);
         }
 
         // GRIND : les points s'accumulent avec la DISTANCE glissee (vitesse*dt), pas le temps ->
@@ -228,12 +248,17 @@ namespace Gameplay
         private static string SpinLabel(int n, float signedDeg)
             => Tier((signedDeg >= 0f ? "SPIN >" : "< SPIN"), n);
 
-        // Titre du saut : la figure dominante (avec son sens).
-        private static string Summary(int spins, int flips, bool bigAir, float spinDeg, float flipDeg)
+        // Titre du saut : la figure dominante (avec son sens). Appele seulement quand
+        // au moins une figure est bouclee (cf Land), d'ou le fallback sur le spin.
+        private static string Summary(int spins, int flips, int rolls, int mixed, float spinDeg, float flipDeg)
         {
-            if (flips >= spins && flips >= 1) return FlipLabel(flips, flipDeg);
-            if (spins >= 1) return SpinLabel(spins, spinDeg);
-            return "GROS SAUT";
+            // Deux axes ou plus dans le meme saut = vrille : un seul titre pour tout le combo,
+            // plus lisible (et plus stylé) que d'annoncer la figure dominante en ignorant le reste.
+            int axes = (spins >= 1 ? 1 : 0) + (flips >= 1 ? 1 : 0) + (rolls >= 1 ? 1 : 0);
+            if (axes >= 2 || mixed >= 1) return Tier("CORKSCREW", spins + flips + rolls + mixed);
+            if (flips >= 1) return FlipLabel(flips, flipDeg);
+            if (rolls >= 1) return Tier("BARREL ROLL", rolls);
+            return SpinLabel(spins, spinDeg);
         }
     }
 }

@@ -29,6 +29,7 @@ namespace Gameplay
         private float shakeAmplitude;
         private float shakeTimer;
         private float currentDistance;
+        private bool releasedForUi;   // c'est un ecran d'UI qui a rendu la souris, pas le joueur
         private readonly RaycastHit[] hits = new RaycastHit[8];
 
         // Secousse ponctuelle (boost, impacts). Decroit lineairement sur la duree.
@@ -49,6 +50,21 @@ namespace Gameplay
         private void LateUpdate()
         {
             if (target == null) return;
+
+            // UN ECRAN D'UI A LA MAIN (pause, options, fin de run) : on REND la souris.
+            // Sinon elle reste verrouillee au centre et invisible -- le joueur ne peut ni
+            // survoler ni cliquer RETRY / QUIT. On coupe aussi le look : la camera n'a rien
+            // a suivre, le jeu est gele derriere.
+            if (UI.MenuFlow.Blocking || RunEnd.Finished)
+            {
+                if (Cursor.lockState == CursorLockMode.Locked) { LockCursor(false); releasedForUi = true; }
+                return;
+            }
+
+            // Retour au jeu : on reprend la souris tout de suite. Sans ca, reprendre la partie
+            // au clavier (Echap) laissait le curseur libre et le look souris mort jusqu'au
+            // prochain clic. On ne re-verrouille que si c'est NOUS qui avions relache.
+            if (releasedForUi) { releasedForUi = false; LockCursor(true); }
 
             HandleCursorToggle();
 

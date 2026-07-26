@@ -61,11 +61,34 @@ namespace Gameplay
         // course tourne encore.
         private static readonly List<DeliveryQuest> All = new();
 
+        // DisableDomainReload : la liste survit au Stop/Play. On repart d'une liste vide a
+        // chaque session, en plus de la purge paresseuse ci-dessous. Cf RunEnd.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            All.Clear();
+            tricks = null;   // pointerait sur le TrickSystem detruit de la partie precedente
+        }
+
+        // Meme cause : les quetes detruites de la partie precedente restent dans la liste si
+        // OnDisable n'a pas tourne. Sans purge, Total les compte et le HUD annonce "3 / 6".
+        private static void Prune()
+        {
+            for (int i = All.Count - 1; i >= 0; i--)
+                if (All[i] == null) All.RemoveAt(i);
+        }
+
+        // Une course "en cours" doit avoir un depot VIVANT. Si le depot a disparu (scene
+        // rechargee a moitie, objet detruit), la quete est perdue : la compter bloquerait
+        // tous les points de retrait pour le reste de la partie, sans aucun moyen d'en sortir.
         public static bool AnyInProgress
         {
             get
             {
-                foreach (var q in All) if (q != null && q.HasPackage) return true;
+                Prune();
+                foreach (var q in All)
+                    if (q != null && q.HasPackage && q.dropoff != null && q.dropoff.gameObject.activeInHierarchy)
+                        return true;
                 return false;
             }
         }
@@ -73,7 +96,7 @@ namespace Gameplay
         // LE COMPTEUR DE VICTOIRE. Les quetes sont posees a la main en scene : Total est
         // simplement leur nombre, Remaining descend a chaque livraison et ne remonte jamais.
         // Remaining == 0 -> partie gagnee (cf RunEnd).
-        public static int Total => All.Count;
+        public static int Total { get { Prune(); return All.Count; } }
 
         public static int Remaining
         {
@@ -100,7 +123,15 @@ namespace Gameplay
 
         private void Pick()
         {
-            if (HasPackage) return;
+            if (HasPackage || Delivered) return;
+            // ON NE PORTE QU'UN COLIS. Le blocage des autres points de retrait est VISUEL
+            // (un mur qui met une frame a se fermer, et jamais autour du joueur) : deux zones
+            // de retrait qui se chevauchent peuvent donc se valider dans la meme frame.
+            // Sans ce garde-fou, deux courses partent d'un coup, une seule est livree, et
+            // celle qui reste bloque AnyInProgress a vie -> plus aucun retrait possible pour
+            // le reste de la partie. On REARME le point au passage : sans ca il resterait
+            // valide (once = true) et serait perdu pour de bon -> victoire inatteignable.
+            if (AnyInProgress) { if (pickup != null) pickup.Rearm(); return; }
             HasPackage = true;
 
             dropoff.gameObject.SetActive(true);   // la zone de livraison jaillit (pop dans QuestZone)

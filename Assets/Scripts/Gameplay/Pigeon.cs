@@ -282,7 +282,8 @@ namespace Gameplay
             KillAll();
             Hitstop.Punch();                                        // slow-mo d'impact
             BloodFx.Spawn(transform.position + Vector3.up * 0.3f, hitDir);
-            Creatures.ReportKill(transform.position);               // les temoins paniquent
+            Creatures.ReportKill(transform.position, true);          // temoins paniquent + popularite
+                                                                    // (seul le joueur peut l'exploser, cf OnTriggerEnter)
             Destroy(gameObject);
         }
 

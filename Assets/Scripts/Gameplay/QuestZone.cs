@@ -28,6 +28,9 @@ namespace Gameplay
         [SerializeField] private float hudWorldWidth = 3.4f;   // largeur REELLE du panneau, en metres
         [SerializeField] private Vector2 hudScaleClamp = new Vector2(0.15f, 3f);
 
+        [Tooltip("Hauteur du vehicule : rattrape une zone posee un peu trop haut par rapport au sol reel sous elle.")]
+        [SerializeField] private float riderClearance = 1.5f;
+
         [Header("Verrou (0 = zone ouverte)")]
         [SerializeField] private int requiredScore;          // score exige pour pouvoir entrer
         [SerializeField] private float denyRadius = 1.1f;    // distance au mur qui declenche le refus
@@ -66,13 +69,31 @@ namespace Gameplay
             ApplyLockCollider();
         }
 
+        // Remet la zone dans l'etat "jamais validee". Sert quand la validation est REFUSEE
+        // apres coup par la quete (ex. deux points de retrait valides dans la meme frame alors
+        // qu'on ne porte qu'un colis) : avec once = true, la zone resterait Completed et le
+        // point de retrait serait perdu pour la partie -- donc la victoire inatteignable.
+        public void Rearm()
+        {
+            Completed = false;
+            held = 0f;
+            popT = -1f;
+        }
+
         public bool PlayerInside
         {
             get
             {
                 if (player == null || zone == null) return false;
                 Vector3 p = player.position;
-                return zone.ClosestPoint(p) == p;   // == sur Vector3 = comparaison approchee
+                if (zone.ClosestPoint(p) == p) return true;   // == sur Vector3 = comparaison approchee
+                // Le pivot du vehicule est AU RAS DU SOL. Une zone posee un rien trop haut
+                // (le relief descend entre l'endroit ou le designer l'a ancree et le sol reel
+                // sous la boite) devient alors intouchable : on passe dessous sans jamais
+                // entrer. On retente donc a hauteur de toit. Une zone reellement perchee
+                // (toit, passerelle) reste hors de portee, la tolerance est courte.
+                p.y += riderClearance;
+                return zone.ClosestPoint(p) == p;
             }
         }
 

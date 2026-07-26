@@ -43,6 +43,7 @@ namespace Gameplay
 
         private void OnGUI()
         {
+            if (RunEnd.Finished || UI.MenuFlow.Blocking) return;   // ecran de fin / menus
             if (car == null || !car.OnRail) return;
             if (cam == null) cam = Camera.main;
             if (cam == null) return;

@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Core;
+using UI;
 
 namespace Gameplay
 {
@@ -8,33 +9,48 @@ namespace Gameplay
     // zero en premier qui decide de l'issue.
     //   POPULARITE (ScoreGauge.Value) tombe a 0 -> DEFAITE ;
     //   COLIS RESTANTS (DeliveryQuest.Remaining) tombe a 0 -> VICTOIRE.
-    // Un seul composant pour les deux issues : elles partagent tout l'ecran de resultats.
-    // Rendu OnGUI -> zero Canvas, comme ScoreGauge / GrindBalanceHud / TrickHud.
+    // Un seul composant pour les deux issues : elles partagent tout l'ecran de resultats
+    // (meme mise en page dans la maquette, seules la couleur et la lettre de rang changent).
+    // Rendu OnGUI via MenuSkin -> zero Canvas, comme ScoreGauge / RunHud / MenuFlow.
     public class RunEnd : MonoBehaviour
     {
-        // Lu par les HUD pour se ranger pendant l'ecran de fin.
+        // Lu par les HUD et par MenuFlow pour se ranger pendant l'ecran de fin.
         public static bool Finished { get; private set; }
 
+        // Le projet tourne avec Enter Play Mode Options / DisableDomainReload : les statiques
+        // SURVIVENT au Stop/Play. Quitter l'editeur sur un ecran de victoire laissait donc
+        // Finished a true, et la scene de menu -- qui ne contient aucun RunEnd pour le
+        // remettre a zero -- s'affichait vide. SubsystemRegistration tourne au tout debut de
+        // chaque session de play : c'est le point d'entree prevu pour ca.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            Finished = false;
+            Time.timeScale = 1f;
+        }
+
         [SerializeField] private TrickSystem tricks;
-        [SerializeField] private float referenceHeight = 1080f;
         // Le joueur martelait peut-etre le saut a l'instant de mourir : sans ce delai il
         // relancerait la partie sans avoir lu une seule ligne de resultats.
         [SerializeField] private float inputDelay = 0.7f;
         // Respiration entre la derniere livraison et l'ecran de victoire : le temps que la
         // chaine se banque et que le "+N" de la jauge se joue.
         [SerializeField] private float winDelay = 1.4f;
+        // Seuils de rang, du meilleur au moins bon, sur le cumul de popularite gagnee.
+        [SerializeField] private int[] rankThresholds = { 6000, 4000, 2000, 0 };
+
+        private static readonly string[] RankLetters = { "S", "A", "B", "C" };
 
         private bool won;
         private float t;      // temps ecoule depuis la fin, en NON scale (le jeu est gele)
         private float winT;
-        private Texture2D disc;
+        private int index;    // 0 = Retry, 1 = Quit
+        private float navAxis;
 
         private void Awake()
         {
             Finished = false;                 // static : doit repartir propre a chaque rechargement
-            Time.timeScale = 1f;              // au cas ou on revient d'un ecran de fin
             if (tricks == null) tricks = FindAnyObjectByType<TrickSystem>();
-            disc = MakeDisc(64);
         }
 
         private void OnDestroy()
@@ -45,12 +61,9 @@ namespace Gameplay
 
         private void Update()
         {
-            if (Finished)
-            {
-                t += Time.unscaledDeltaTime;
-                if (t >= inputDelay && InputActions.GetActionPressed()) Retry();
-                return;
-            }
+            if (Finished) { UpdateEndScreen(); return; }
+
+            if (MenuFlow.Blocking) return;    // menu ou pause : la partie n'a pas commence / est suspendue
 
             // VICTOIRE. Total > 0 : sans ce garde-fou une scene sans quete "gagnerait" des la
             // 1re frame, les DeliveryQuest s'enregistrant dans All au OnEnable, pas avant.
@@ -82,109 +95,133 @@ namespace Gameplay
             won = victory;
             Finished = true;
             t = 0f;
+            index = 0;
             Time.timeScale = 0f;
         }
 
-        private void Retry()
+        // Navigation RETRY / QUIT : clavier, manette et souris, comme dans MenuFlow.
+        private void UpdateEndScreen()
         {
-            Finished = false;
-            Time.timeScale = 1f;   // AVANT le chargement, sinon la scene rechargee reste gelee
-            SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+            t += Time.unscaledDeltaTime;
+            if (t < inputDelay) return;
+
+            float axis = InputActions.GetMovementAxis().x;
+            if (Mathf.Abs(axis) >= 0.5f && Mathf.Abs(navAxis) < 0.5f)
+                index = 1 - index;
+            navAxis = axis;
+
+            Vector2 mouse = MenuSkin.Mouse();
+            for (int i = 0; i < 2; i++)
+                if (ChoiceRect(i).Contains(mouse))
+                {
+                    index = i;
+                    if (MenuSkin.MouseClicked()) { Activate(); return; }
+                }
+
+            if (InputActions.GetActionPressed()) Activate();
         }
+
+        private void Activate()
+        {
+            // Les deux issues passent par un chargement de scene : c'est le seul moyen de
+            // remettre colis, jauge et chaine a zero sans un Reset() a maintenir sur chaque
+            // systeme. Retry recharge la partie, Quit revient a la scene de menu.
+            Finished = false;
+            Time.timeScale = 1f;   // AVANT le chargement, sinon la scene chargee reste gelee
+            if (index == 0) SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+            else SceneManager.LoadScene(MenuFlow.MenuScene);
+        }
+
+        // ---- rendu ----
+
+        private const float RowX = 60f, RowW = 760f, RowH = 58f, RowGap = 18f, RowY = 320f;
+        private static readonly string[] Choices = { "Retry", "Quit" };
+
+        private static Rect ChoiceRect(int i) => new Rect(RowX + 190f + i * 260f, 760f, 220f, 56f);
 
         private void OnGUI()
         {
             if (!Finished) return;
 
-            Matrix4x4 m0 = GUI.matrix;
-            float k = referenceHeight > 1f ? Screen.height / referenceHeight : 1f;
-            GUIUtility.ScaleAroundPivot(new Vector2(k, k), Vector2.zero);
-            float sw = Screen.width / k, sh = Screen.height / k;
+            Matrix4x4 m0 = MenuSkin.Begin(out float sw, out float sh);
 
             // fondu qui s'installe (non scale : le jeu est gele)
             float fade = Mathf.Clamp01(t * 2.2f);
-            Fill(new Rect(0f, 0f, sw, sh), new Color(0.02f, 0.02f, 0.06f, 0.86f * fade));
+            float pop = EaseOutBack(Mathf.Clamp01(t * 1.6f));
 
-            Color hue = won ? new Color(0.35f, 1f, 0.6f) : new Color(1f, 0.3f, 0.35f);
-            const float pw = 720f, ph = 420f;
-            // pop d'arrivee du panneau
-            float pop = EaseOutBack(Mathf.Clamp01(t * 1.8f));
-            var panel = new Rect((sw - pw) * 0.5f, (sh - ph) * 0.5f, pw, ph);
-            GUIUtility.ScaleAroundPivot(new Vector2(pop, pop), panel.center);
+            Color wedgeCol = won ? new Color(0.88f, 0.07f, 0.62f) : new Color(0.58f, 0.10f, 0.78f);
+            Color rankCol = won ? MenuSkin.Gold : MenuSkin.Cream;
 
-            Blit(panel.center.x, panel.center.y, pw * 0.62f, new Color(hue.r, hue.g, hue.b, 0.16f));
-            Fill(panel, new Color(0.05f, 0.06f, 0.12f, 0.97f));
-            Frame(panel, 4f, hue);
-            // liseres d'angle facon enseigne, comme la jauge
-            Fill(new Rect(panel.x, panel.y - 5f, 90f, 4f), new Color(1f, 0.25f, 0.85f, 0.95f));
-            Fill(new Rect(panel.xMax - 90f, panel.yMax + 1f, 90f, 4f), new Color(1f, 0.25f, 0.85f, 0.95f));
+            // Nuit cyberpunk + silhouette de ville, comme la maquette de defaite.
+            MenuSkin.Fill(new Rect(0f, 0f, sw, sh), new Color(MenuSkin.Night.r, MenuSkin.Night.g, MenuSkin.Night.b, fade));
+            MenuSkin.Skyline(new Rect(0f, sh - 420f, sw, 420f), new Color(0f, 0f, 0f, 0.28f * fade));
 
-            Label(new Rect(panel.x, panel.y + 34f, panel.width, 70f),
-                  won ? "TOUS LES COLIS LIVRES !" : "PLUS PERSONNE NE TE REGARDE",
-                  won ? 52 : 40, hue, TextAnchor.UpperCenter);
-            Label(new Rect(panel.x, panel.y + 96f, panel.width, 30f),
-                  won ? "VICTOIRE" : "GAME OVER", 22,
-                  new Color(1f, 1f, 1f, 0.55f), TextAnchor.UpperCenter);
+            // Panneau en biseau + lettre de rang.
+            var wedge = new Rect(sw - 640f, 0f, 640f, sh);
+            MenuSkin.Wedge(wedge, new Color(wedgeCol.r, wedgeCol.g, wedgeCol.b, fade));
+            var rankCenter = new Vector2(wedge.x + 330f, sh * 0.5f);
+            MenuSkin.Burst(rankCenter, 300f * pop, new Color(1f, 1f, 1f, 0.28f * fade));
+            MenuSkin.Glow(rankCenter, 200f * pop, new Color(rankCol.r, rankCol.g, rankCol.b, 0.22f * fade));
+            MenuSkin.TextOutlined(new Rect(rankCenter.x - 200f, rankCenter.y - 210f, 400f, 420f),
+                                  Rank(), Mathf.RoundToInt(300f * pop), rankCol, MenuSkin.Ink, 6f,
+                                  TextAnchor.MiddleCenter);
 
-            float y = panel.y + 158f;
-            Row(panel, ref y, "COLIS LIVRES", DeliveryQuest.DeliveredCount + " / " + DeliveryQuest.Total);
-            Row(panel, ref y, "POPULARITE GAGNEE",
-                (ScoreGauge.Instance != null ? ScoreGauge.Instance.Earned : 0).ToString("N0"));
-            Row(panel, ref y, "MEILLEURE CHAINE",
-                tricks != null ? "x" + tricks.BestCombo : "--");
-            Row(panel, ref y, "PLUS LONG GRIND",
-                tricks != null ? Mathf.RoundToInt(tricks.BestGrind) + " m" : "--");
+            // Titre : eclat d'etoile derriere, lettrage cerne devant.
+            var titleBox = new Rect(RowX, 120f, RowW, 120f);
+            MenuSkin.Burst(new Vector2(titleBox.x + 230f, titleBox.y + 58f), 260f * pop,
+                           new Color(wedgeCol.r, wedgeCol.g, wedgeCol.b, 0.75f * fade));
+            MenuSkin.TextOutlined(titleBox, won ? "VICTORY" : "DEFEAT", 82,
+                                  won ? MenuSkin.Cream : new Color(1f, 0.86f, 0.6f),
+                                  MenuSkin.Ink, 5f, TextAnchor.UpperLeft);
+            MenuSkin.Text(new Rect(RowX + 4f, titleBox.y + 96f, RowW, 34f),
+                          won ? "TOUS LES COLIS SONT LIVRES" : "PLUS PERSONNE NE TE REGARDE", 22,
+                          new Color(1f, 1f, 1f, 0.6f * fade), TextAnchor.UpperLeft);
 
-            // invite au retry, une fois le delai passe
+            // Les 4 compteurs de la maquette, qui tombent un a un.
+            Row(0, "Score", (ScoreGauge.Instance != null ? ScoreGauge.Instance.Earned : 0).ToString("N0"), fade);
+            Row(1, "Deliveries", DeliveryQuest.DeliveredCount + " / " + DeliveryQuest.Total, fade);
+            Row(2, "Best Combo", tricks != null ? "x" + tricks.BestCombo : "--", fade);
+            Row(3, "Best Grind", tricks != null ? Mathf.RoundToInt(tricks.BestGrind) + " m" : "--", fade);
+
+            // RETRY / QUIT
             if (t >= inputDelay)
-            {
-                float blink = 0.65f + 0.35f * Mathf.Sin(t * 5f);
-                Label(new Rect(panel.x, panel.yMax - 58f, panel.width, 30f),
-                      "A  /  ESPACE   ->   REJOUER", 20,
-                      new Color(1f, 1f, 1f, blink), TextAnchor.UpperCenter);
-            }
+                for (int i = 0; i < Choices.Length; i++)
+                {
+                    var r = ChoiceRect(i);
+                    bool sel = i == index;
+                    if (sel)
+                    {
+                        MenuSkin.Band(new Rect(r.x - 20f, r.y, r.width + 40f, r.height),
+                                      new Color(MenuSkin.Cyan.r, MenuSkin.Cyan.g, MenuSkin.Cyan.b, 0.85f));
+                        MenuSkin.Text(new Rect(r.x - 46f, r.y, 40f, r.height), ">", 30,
+                                      Color.white, TextAnchor.MiddleCenter);
+                    }
+                    MenuSkin.TextOutlined(r, Choices[i].ToUpperInvariant(), 30,
+                                          sel ? Color.white : MenuSkin.Cream, MenuSkin.Ink, 3f,
+                                          TextAnchor.MiddleCenter);
+                }
 
-            GUI.matrix = m0;
-            GUI.color = Color.white;
+            MenuSkin.End(m0);
         }
 
-        // Une ligne de resultat : libelle a gauche, valeur a droite, filet entre les deux.
-        private static void Row(Rect panel, ref float y, string label, string value)
+        // Une ligne de resultat : elle arrive en glissant, decalee de la precedente.
+        private void Row(int i, string label, string value, float fade)
         {
-            float x = panel.x + 60f, w = panel.width - 120f;
-            Label(new Rect(x, y, w, 26f), label, 17, new Color(0.62f, 0.8f, 1f, 0.8f), TextAnchor.UpperLeft);
-            Label(new Rect(x, y - 3f, w, 30f), value, 24, Color.white, TextAnchor.UpperRight);
-            Fill(new Rect(x, y + 30f, w, 1f), new Color(1f, 1f, 1f, 0.10f));
-            y += 48f;
+            float in01 = Mathf.Clamp01((t - 0.15f - i * 0.09f) * 4f);
+            if (in01 <= 0f) return;
+            var r = new Rect(RowX - 60f * (1f - in01), RowY + i * (RowH + RowGap), RowW, RowH);
+            MenuSkin.StatRow(r, label, value,
+                             new Color(0.32f, 0.45f, 0.95f, 0.95f * in01 * fade));
         }
 
-        private static void Fill(Rect r, Color c)
+        // Rang lu sur le cumul de popularite gagnee (Earned ne redescend jamais : un rang
+        // ne peut pas etre vole par la fonte de fin de partie).
+        private string Rank()
         {
-            GUI.color = c;
-            GUI.DrawTexture(r, Texture2D.whiteTexture);
-        }
-
-        private void Blit(float cx, float cy, float rad, Color c)
-        {
-            GUI.color = c;
-            GUI.DrawTexture(new Rect(cx - rad, cy - rad, rad * 2f, rad * 2f), disc);
-        }
-
-        private static void Frame(Rect r, float th, Color c)
-        {
-            Fill(new Rect(r.x, r.y, r.width, th), c);
-            Fill(new Rect(r.x, r.yMax - th, r.width, th), c);
-            Fill(new Rect(r.x, r.y, th, r.height), c);
-            Fill(new Rect(r.xMax - th, r.y, th, r.height), c);
-        }
-
-        private static void Label(Rect r, string txt, int size, Color c, TextAnchor a)
-        {
-            GUI.color = c;
-            GUI.Label(r, txt, new GUIStyle(GUI.skin.label)
-            {
-                fontSize = size, fontStyle = FontStyle.Bold, alignment = a, wordWrap = false,
-            });
+            int earned = ScoreGauge.Instance != null ? ScoreGauge.Instance.Earned : 0;
+            for (int i = 0; i < rankThresholds.Length && i < RankLetters.Length; i++)
+                if (earned >= rankThresholds[i]) return RankLetters[i];
+            return RankLetters[RankLetters.Length - 1];
         }
 
         private static float EaseOutBack(float x)
@@ -192,21 +229,6 @@ namespace Gameplay
             const float c1 = 2.2f, c3 = c1 + 1f;
             float p = x - 1f;
             return 1f + c3 * p * p * p + c1 * p * p;
-        }
-
-        private static Texture2D MakeDisc(int size)
-        {
-            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
-            float rad = size * 0.5f;
-            for (int j = 0; j < size; j++)
-                for (int i = 0; i < size; i++)
-                {
-                    float d = Vector2.Distance(new Vector2(i + 0.5f, j + 0.5f), new Vector2(rad, rad));
-                    tex.SetPixel(i, j, new Color(1f, 1f, 1f, Mathf.Clamp01(1f - d / rad)));
-                }
-            tex.Apply();
-            tex.hideFlags = HideFlags.HideAndDontSave;
-            return tex;
         }
     }
 }

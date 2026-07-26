@@ -63,7 +63,7 @@ namespace Gameplay
 
         private void OnGUI()
         {
-            if (RunEnd.Finished) return;      // l'ecran de fin prend toute la place
+            if (RunEnd.Finished || UI.MenuFlow.Blocking) return;   // ecran de fin / menus
             if (total <= 0) return;           // pas de quete en scene : pas de compteur
 
             Matrix4x4 m0 = GUI.matrix;

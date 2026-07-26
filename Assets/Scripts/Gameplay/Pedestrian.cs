@@ -500,7 +500,7 @@ namespace Gameplay
 
         // ---- Temoin d'horreur : une creature meurt devant lui -> il panique ----
 
-        private void OnCreatureKilled(Vector3 deathPos)
+        private void OnCreatureKilled(Vector3 deathPos, bool byPlayer)
         {
             if (dead || mode == Mode.Stunned || mode == Mode.Flee || mode == Mode.Driving) return;
             Vector3 to = deathPos - transform.position; to.y = 0f;
@@ -796,7 +796,7 @@ namespace Gameplay
             dead = true;
             if (playerKill) Hitstop.Punch(); // slow-mo d'impact lisse
             BloodFx.Spawn(transform.position, hitDir);
-            Creatures.ReportKill(transform.position); // les temoins paniquent
+            Creatures.ReportKill(transform.position, playerKill); // temoins paniquent + popularite
             Destroy(gameObject);
         }
 

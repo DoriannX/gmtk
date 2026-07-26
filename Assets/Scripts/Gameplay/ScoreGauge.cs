@@ -5,8 +5,11 @@ namespace Gameplay
     // JAUGE DE POINTS : ressource qui FOND en continu. On demarre plein-ish, ca descend tout
     // seul, et il faut enchainer figures + livraisons pour remonter. Source unique de verite
     // pour "les points" :
-    //   Value  = charge courante (0..Max), c'est elle qui se vide ;
+    //   Value  = charge courante, SANS PLAFOND, c'est elle qui se vide ;
     //   Earned = cumul de tout ce qui a ete gagne, ne redescend JAMAIS.
+    // AUCUNE limite haute : la seule borne du jeu est le zero. La barre ne mesure donc pas
+    // "combien sur un maximum" (il n'y en a pas) mais LE TEMPS DE SURVIE restant a la fonte
+    // courante -- la seule lecture qui ait un sens quand la valeur est libre de monter.
     // Les zones verrouillees se basent sur Earned : un seuil doit rester atteint une fois
     // franchi, sinon une zone se refermerait pendant qu'on roule vers elle.
     // Les points de figures sont lus sur TrickSystem.Total (sa banque) par DELTA -> pas besoin
@@ -17,10 +20,15 @@ namespace Gameplay
         public static ScoreGauge Instance { get; private set; }
 
         [Header("Ressource")]
-        [SerializeField] private float max = 1500f;
-        [SerializeField] private float startValue = 975f;   // 65 % du max, comme avant
+        [SerializeField] private float startValue = 975f;
         [SerializeField] private float drainPerSecond = 10f;
+        // Echelle de la BARRE seulement : temps de survie affiche a barre pleine. Ce n'est pas
+        // un plafond -- au-dela la barre reste pleine et passe a l'or, la valeur continue.
+        [SerializeField] private float fullBarSeconds = 120f;
         [SerializeField] private float lowThreshold = 0.25f;   // en dessous : alarme
+        // Ecraser un PNJ fait fuir les temoins... et les abonnes. C'est la contrepartie du
+        // carnage : la conduite sale rapporte des figures mais coute de la popularite.
+        [SerializeField] private int killPenalty = 250;
 
         [Header("Sources")]
         [SerializeField] private TrickSystem tricks;
@@ -36,30 +44,55 @@ namespace Gameplay
         [SerializeField] private float referenceHeight = 1080f;
 
         public float Value { get; private set; }
-        public float Max => max;
         public int Earned { get; private set; }
 
         // Multiplicateur de fonte, pousse de l'exterieur (escalade du dernier colis, cf RunHud).
         // 1 = rythme normal.
         public float DrainMultiplier { get; set; } = 1f;
-        public float Fill01 => max <= 0f ? 0f : Mathf.Clamp01(Value / max);
+
+        // Secondes avant le zero a la fonte courante. C'est LA lecture du joueur.
+        public float SecondsLeft
+        {
+            get
+            {
+                float d = drainPerSecond * Mathf.Max(0f, DrainMultiplier);
+                return d <= 0.001f ? float.PositiveInfinity : Value / d;
+            }
+        }
+
+        // Remplissage de la barre : 1 = au moins fullBarSeconds de marge. Au-dela, la barre
+        // ne peut plus grandir, c'est la couleur qui prend le relais (cf `over` dans OnGUI).
+        public float Fill01 => fullBarSeconds <= 0f ? 0f : Mathf.Clamp01(SecondsLeft / fullBarSeconds);
         public bool Empty => Value <= 0.001f;
 
-        // Ajoute des points : remonte la jauge ET le cumul.
+        // Ajoute des points : remonte la jauge ET le cumul. Aucun ecretage : une chaine a x10
+        // sur une jauge deja bien remplie doit valoir ses points, sinon le beau jeu est puni.
         public void Add(int pts)
         {
             if (pts <= 0) return;
-            Value = Mathf.Min(max, Value + pts);
+            Value += pts;
             Earned += pts;
             gainPop = 1f;
             gainFloat = pts;
             gainFloatT = 0f;
         }
 
+        // Retire des points SANS toucher au cumul : Earned est un historique de ce qui a ete
+        // gagne (il ouvre les zones verrouillees), une bavure ne doit pas le faire reculer.
+        public void Penalize(int pts)
+        {
+            if (pts <= 0) return;
+            Value = Mathf.Max(0f, Value - pts);
+            penaltyPop = 1f;
+            gainFloat = -pts;
+            gainFloatT = 0f;
+        }
+
         private int lastTrickTotal;
         private float gainPop;        // 0..1, flash a chaque gain
+        private float penaltyPop;     // 0..1, flash rouge a chaque bavure
         private float gainFloatT = -1f;
-        private int gainFloat;
+        private int gainFloat;        // signe : positif = gain, negatif = penalite
         private float t, shownValue;
         private Texture2D disc;
 
@@ -69,9 +102,19 @@ namespace Gameplay
             if (tricks == null) tricks = GetComponent<TrickSystem>();
             if (tricks == null) tricks = FindAnyObjectByType<TrickSystem>();
             lastTrickTotal = tricks != null ? tricks.Total : 0;
-            Value = Mathf.Clamp(startValue, 0f, max);
+            Value = Mathf.Max(0f, startValue);
             shownValue = Value;
             disc = MakeDisc(64);
+        }
+
+        // Tous les kills passent par ce hub (pieton comme pigeon) : un seul branchement
+        // suffit, inutile de penaliser depuis chaque creature.
+        private void OnEnable() => Creatures.Killed += OnCreatureKilled;
+        private void OnDisable() => Creatures.Killed -= OnCreatureKilled;
+
+        private void OnCreatureKilled(Vector3 pos, bool byPlayer)
+        {
+            if (byPlayer) Penalize(killPenalty);
         }
 
         private void OnDestroy()
@@ -95,6 +138,7 @@ namespace Gameplay
             Value = Mathf.Max(0f, Value - drainPerSecond * Mathf.Max(0f, DrainMultiplier) * dt);
 
             gainPop = Mathf.Max(0f, gainPop - Time.unscaledDeltaTime * 2f);
+            penaltyPop = Mathf.Max(0f, penaltyPop - Time.unscaledDeltaTime * 1.6f);
             if (gainFloatT >= 0f)
             {
                 gainFloatT += Time.unscaledDeltaTime;
@@ -106,12 +150,22 @@ namespace Gameplay
 
         private void OnGUI()
         {
-            float f = max <= 0f ? 0f : Mathf.Clamp01(shownValue / max);
+            if (UI.MenuFlow.Blocking || RunEnd.Finished) return;   // menus / ecran de fin
+
+            // La barre lit un TEMPS, pas un ratio sur un plafond : `barSeconds` secondes de
+            // marge = barre pleine. La valeur affichee suit `shownValue` (elle roule).
+            float drain = drainPerSecond * Mathf.Max(0f, DrainMultiplier);
+            float secondsShown = drain <= 0.001f ? fullBarSeconds : shownValue / drain;
+            float f = fullBarSeconds <= 0f ? 0f : Mathf.Clamp01(secondsShown / fullBarSeconds);
+            // Marge au-dela de la barre pleine : c'est elle qui pousse la barre vers l'or.
+            float over = fullBarSeconds <= 0f
+                ? 0f
+                : Mathf.Clamp01((secondsShown - fullBarSeconds) / fullBarSeconds);
             bool low = f <= lowThreshold;
             float alarm = low ? 1f - f / Mathf.Max(0.001f, lowThreshold) : 0f;
 
-            // secousse + pulsation quand la jauge se vide
-            float shake = alarm * 4f;
+            // secousse + pulsation quand la jauge se vide (la bavure secoue aussi)
+            float shake = alarm * 4f + penaltyPop * 6f;
             float x = screenPos.x + Mathf.Sin(t * 47f) * shake;
             float y = screenPos.y + Mathf.Cos(t * 53f) * shake * 0.7f;
             float s = 1f + 0.10f * EaseOutBack(gainPop) + 0.03f * alarm * Mathf.Sin(t * 9f);
@@ -126,7 +180,14 @@ namespace Gameplay
             var frame = new Rect(x, y + 20f, width, height);
             Color hot = Color.Lerp(new Color(1f, 0.25f, 0.2f), new Color(1f, 0.85f, 0.2f), Mathf.InverseLerp(0f, 0.5f, f));
             Color fillCol = Color.Lerp(hot, new Color(0.3f, 1f, 0.55f), Mathf.InverseLerp(0.5f, 1f, f));
-            Color accent = Color.Lerp(fillCol, Color.white, 0.35f + 0.5f * gainPop);
+            // Grosse avance : la barre passe a l'or et le cadre bat. Sans ca, une fois la barre
+            // pleine le joueur croirait que ses points ne comptent plus.
+            if (over > 0f)
+                fillCol = Color.Lerp(fillCol, new Color(1f, 0.88f, 0.35f),
+                                     Mathf.Clamp01(0.45f + 0.55f * over) * (0.75f + 0.25f * Mathf.Sin(t * 5f)));
+            Color accent = Color.Lerp(fillCol, Color.white, 0.35f + 0.5f * gainPop + 0.3f * over);
+            // bavure : tout le cadre vire au rouge le temps du flash
+            if (penaltyPop > 0f) accent = Color.Lerp(accent, new Color(1f, 0.15f, 0.2f), penaltyPop);
 
             // halo, respire quand ca va mal
             Fill(new Rect(frame.x - 6f, frame.y - 6f, frame.width + 12f, frame.height + 12f),
@@ -170,7 +231,10 @@ namespace Gameplay
                       : new Color(0.6f, 0.85f, 1f, 0.9f),
                   TextAnchor.UpperLeft);
 
-            string val = Mathf.CeilToInt(shownValue).ToString("N0") + " / " + Mathf.RoundToInt(max).ToString("N0");
+            // Jamais de "/ quelque chose" : il n'y a plus de borne haute. La valeur brute, et
+            // a cote le temps qu'elle represente -- c'est ce dont le joueur decide.
+            string val = Mathf.CeilToInt(shownValue).ToString("N0")
+                       + "   " + Mathf.CeilToInt(secondsShown) + " s";
             Label(new Rect(frame.x + 3f, frame.y + 4f, frame.width - 8f, frame.height - 6f), val, 17,
                   new Color(0f, 0f, 0f, 0.5f), TextAnchor.MiddleRight);
             Label(new Rect(frame.x + 1f, frame.y + 2f, frame.width - 10f, frame.height - 6f), val, 17,
@@ -180,13 +244,18 @@ namespace Gameplay
             Label(new Rect(frame.x + 1f, frame.yMax + 4f, 260f, 18f),
                   "CUMUL  " + Earned.ToString("N0"), 11, new Color(0.65f, 0.8f, 1f, 0.75f), TextAnchor.UpperLeft);
 
-            // "+N" qui monte a chaque gain
+            // "+N" qui monte a chaque gain, "-N" rouge a chaque bavure
             if (gainFloatT >= 0f)
             {
                 float rise01 = gainFloatT / 1.1f;
-                var fr = new Rect(frame.x + frame.width * 0.5f, frame.y - 6f - 34f * rise01, 160f, 26f);
-                Label(fr, "+" + gainFloat.ToString("N0"), 22,
-                      new Color(0.5f, 1f, 0.6f, 1f - rise01), TextAnchor.UpperLeft);
+                bool loss = gainFloat < 0;
+                var fr = new Rect(frame.x + frame.width * 0.5f, frame.y - 6f - 34f * rise01, 220f, 26f);
+                Label(fr, (loss ? "-" : "+") + Mathf.Abs(gainFloat).ToString("N0"), 22,
+                      loss ? new Color(1f, 0.35f, 0.35f, 1f - rise01)
+                           : new Color(0.5f, 1f, 0.6f, 1f - rise01), TextAnchor.UpperLeft);
+                if (loss)
+                    Label(new Rect(fr.x + 74f, fr.y + 4f, 260f, 22f), "TU AS TUE QUELQU'UN", 14,
+                          new Color(1f, 0.5f, 0.5f, 0.9f * (1f - rise01)), TextAnchor.UpperLeft);
             }
 
             GUI.matrix = m0;

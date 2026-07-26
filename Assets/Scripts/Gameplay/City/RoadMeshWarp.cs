@@ -38,6 +38,12 @@ namespace Gameplay.City
             public Vector4[] tangents;
             public Vector2[] uv;
             public int[] tris;
+            // Sous-mesh d'origine de chaque TRIANGLE (tris.Length / 3 entrees) et nom du
+            // materiau de chaque sous-mesh. Le kit SM_* separe bitume / trottoir / bordure /
+            // marquage neon en slots nommes : sans ces deux tableaux le warp les fond en un
+            // seul materiau et toute la distinction est perdue.
+            public int[] triSub;
+            public string[] subNames;
             public float length;   // taille sur Z apres recentrage
             public float width;    // taille sur X
             public float bottom;   // y du point le plus bas (negatif) -> hauteur du dessous
@@ -99,7 +105,8 @@ namespace Gameplay.City
 
         // Lit le mesh, le recentre, et met l'axe long sur Z. Retourne valid=false si le mesh
         // n'est pas lisible (isReadable) ou vide -> l'appelant log et abandonne le segment.
-        public static Tile Prepare(Mesh mesh, Matrix4x4 toRoot, bool lengthOnZ, bool subdivide = true)
+        public static Tile Prepare(Mesh mesh, Matrix4x4 toRoot, bool lengthOnZ, bool subdivide = true,
+                                   string[] subNames = null)
         {
             var t = new Tile();
             if (mesh == null || !mesh.isReadable || mesh.vertexCount == 0) return t;
@@ -110,6 +117,15 @@ namespace Gameplay.City
             var srcUV = mesh.uv;
             var tris = (int[])mesh.triangles.Clone();
             int n = src.Length;
+
+            // `mesh.triangles` concatene les sous-meshes DANS L'ORDRE : les compteurs d'index
+            // suffisent donc a etiqueter chaque triangle sans relire les sous-meshes un par un.
+            var triSub = new int[tris.Length / 3];
+            for (int s = 0, at = 0; s < mesh.subMeshCount; s++)
+            {
+                int count = (int)mesh.GetIndexCount(s) / 3;
+                for (int i = 0; i < count && at < triSub.Length; i++, at++) triSub[at] = s;
+            }
 
             bool hasN = srcN != null && srcN.Length == n;
             bool hasT = srcT != null && srcT.Length == n;
@@ -159,13 +175,15 @@ namespace Gameplay.City
             Vector3 off = new Vector3(-(lo.x + hi.x) * 0.5f, -roadY, -lo.z);
             for (int i = 0; i < n; i++) verts[i] += off;
 
-            if (subdivide) Subdivide(ref verts, ref norms, ref tans, ref uvs, ref tris, hasN, hasT, hasUV);
+            if (subdivide) Subdivide(ref verts, ref norms, ref tans, ref uvs, ref tris, ref triSub, hasN, hasT, hasUV);
 
             t.verts = verts;
             t.normals = hasN ? norms : null;
             t.tangents = hasT ? tans : null;
             t.uv = hasUV ? uvs : null;
             t.tris = tris;
+            t.triSub = triSub;
+            t.subNames = subNames;
             t.length = hi.z - lo.z;
             t.width = hi.x - lo.x;
             t.bottom = lo.y - roadY;                 // meme recentrage que les sommets
@@ -212,7 +230,7 @@ namespace Gameplay.City
         const int MaxTris = 20000;         // garde-fou : sortie si la decoupe s'emballe
 
         private static void Subdivide(ref Vector3[] verts, ref Vector3[] norms, ref Vector4[] tans,
-                                      ref Vector2[] uvs, ref int[] tris,
+                                      ref Vector2[] uvs, ref int[] tris, ref int[] triSub,
                                       bool hasN, bool hasT, bool hasUV)
         {
             var v = new List<Vector3>(verts);
@@ -220,6 +238,9 @@ namespace Gameplay.City
             var g = new List<Vector4>(tans);
             var u = new List<Vector2>(uvs);
             var f = new List<int>(tris);
+            // Les enfants d'un triangle tranche heritent de son sous-mesh : la decoupe change la
+            // resolution, jamais l'appartenance a un materiau.
+            var fs = new List<int>(triSub);
 
             // Sommet sur l'arete p->q, au parametre t. Les deux triangles qui partagent cette
             // arete appellent avec les memes p, q et le meme t -> memes valeurs des deux cotes.
@@ -237,16 +258,19 @@ namespace Gameplay.City
             int slabs = Mathf.Clamp(Mathf.CeilToInt((zmax - zmin) / MaxSpan), 1, 512);
 
             var next = new List<int>();
+            var nextS = new List<int>();
             for (int s = 1; s < slabs && f.Count / 3 < MaxTris; s++)
             {
                 float plane = zmin + s * (zmax - zmin) / slabs;
                 next.Clear();
+                nextS.Clear();
 
                 for (int i = 0; i < f.Count; i += 3)
                 {
+                    int sub = i / 3 < fs.Count ? fs[i / 3] : 0;
                     int a = f[i], b = f[i + 1], c = f[i + 2];
                     bool pa = v[a].z >= plane, pb = v[b].z >= plane, pc = v[c].z >= plane;
-                    if (pa == pb && pb == pc) { next.Add(a); next.Add(b); next.Add(c); continue; }
+                    if (pa == pb && pb == pc) { next.Add(a); next.Add(b); next.Add(c); nextS.Add(sub); continue; }
 
                     // A = le sommet seul de son cote ; B et C suivent dans l'ordre cyclique,
                     // ce qui garde le sens de parcours dans les trois enfants.
@@ -258,13 +282,15 @@ namespace Gameplay.City
                     float dA = v[A].z - plane, dB = v[B].z - plane, dC = v[C].z - plane;
                     int P = cut(A, B, dA / (dA - dB));
                     int Q = cut(A, C, dA / (dA - dC));
-                    Emit(next, v, A, P, Q);
-                    Emit(next, v, P, B, C);
-                    Emit(next, v, P, C, Q);
+                    Emit(next, nextS, v, A, P, Q, sub);
+                    Emit(next, nextS, v, P, B, C, sub);
+                    Emit(next, nextS, v, P, C, Q, sub);
                 }
 
                 f.Clear();
                 f.AddRange(next);
+                fs.Clear();
+                fs.AddRange(nextS);
             }
 
             verts = v.ToArray();
@@ -272,14 +298,16 @@ namespace Gameplay.City
             tans = g.ToArray();
             uvs = u.ToArray();
             tris = f.ToArray();
+            triSub = fs.ToArray();
         }
 
         // Un sommet pile sur le plan donne un enfant d'aire nulle : on ne l'emet pas. Le seuil
         // ne mord que sur du vraiment degenere (aire ~5e-7 m2), pas sur un triangle fin.
-        private static void Emit(List<int> dst, List<Vector3> v, int a, int b, int c)
+        private static void Emit(List<int> dst, List<int> dstSub, List<Vector3> v, int a, int b, int c, int sub)
         {
             if (Vector3.Cross(v[b] - v[a], v[c] - v[a]).sqrMagnitude < 1e-12f) return;
             dst.Add(a); dst.Add(b); dst.Add(c);
+            dstSub.Add(sub);
         }
 
         // Repere orthonorme a une station : position + base (fwd/right/up).
@@ -311,8 +339,14 @@ namespace Gameplay.City
         // `pick[rep]` indexe `variants` ; 0 ou hors bornes = la tuile de base. Les variantes du kit
         // ont EXACTEMENT la meme emprise que la tuile droite (13 x 8), c'est ce qui permet de les
         // substituer sans toucher au calcul de repetition.
+        // `slots` : table GLOBALE des materiaux du segment, dans l'ordre des sous-meshes de
+        // sortie. Elle ne peut pas etre l'ordre des slots d'UNE tuile : la tuile droite, la
+        // variante pieton et la variante egouts partagent leurs trois premiers slots mais
+        // different sur le quatrieme (neon / passage pieton / plaque). Fondre par INDEX
+        // peindrait le passage pieton en neon selon la repetition ; on mappe donc par NOM.
+        // slots == null -> ancien comportement, un seul sous-mesh.
         public static Mesh Warp(in Tile tile, Spline spline, Mesh reuse, Deck deck = default(Deck),
-                                Tile[] variants = null, int[] pick = null)
+                                Tile[] variants = null, int[] pick = null, string[] slots = null)
         {
             if (!tile.valid) return null;
             float len = spline.GetLength();
@@ -355,18 +389,27 @@ namespace Gameplay.City
             int total = vn + soffitV + sideV;
             int triCount = tn + soffitT + sideT;
 
+            int subCount = slots != null && slots.Length > 0 ? slots.Length : 1;
+            // Le dessous et les flancs sont de la chaussee vue par en bas : ils suivent le
+            // bitume. A defaut de slot nomme, le premier fait l'affaire.
+            int groundSlot = SlotIndex(slots, "M_bitume");
+
             // Pendant un drag, `repeats` ne change en general pas d'une frame a l'autre : les
             // triangles et les UV sont alors identiques et n'ont pas besoin d'etre re-uploades.
+            uint reuseIdx = 0;
+            if (reuse != null && reuse.subMeshCount == subCount)
+                for (int s = 0; s < subCount; s++) reuseIdx += reuse.GetIndexCount(s);
             bool sameTopology = reuse != null
                                 && reuse.vertexCount == total
-                                && reuse.subMeshCount == 1
-                                && reuse.GetIndexCount(0) == (uint)triCount;
+                                && reuse.subMeshCount == subCount
+                                && reuseIdx == (uint)triCount;
 
             var outV = new Vector3[total];
             var outN = tile.normals != null ? new Vector3[total] : null;
             var outT = tile.tangents != null ? new Vector4[total] : null;
             var outUV = !sameTopology && tile.uv != null ? new Vector2[total] : null;
             var outTris = sameTopology ? null : new int[triCount];
+            var outSub = outTris != null && subCount > 1 ? new int[triCount / 3] : null;
 
             int baseV = 0, baseT = 0;
             for (int rep = 0; rep < repeats; rep++)
@@ -403,12 +446,29 @@ namespace Gameplay.City
                 }
 
                 if (outTris != null)
+                {
                     for (int i = 0; i < src.tris.Length; i++)
                         outTris[baseT + i] = src.tris[i] + baseV;
+
+                    if (outSub != null)
+                    {
+                        int[] map = SlotMap(src.subNames, slots);
+                        for (int t = 0; t < src.tris.Length / 3; t++)
+                        {
+                            int local = src.triSub != null && t < src.triSub.Length ? src.triSub[t] : 0;
+                            outSub[baseT / 3 + t] = map != null && local < map.Length ? map[local] : groundSlot;
+                        }
+                    }
+                }
 
                 baseV += src.verts.Length;
                 baseT += src.tris.Length;
             }
+
+            // Tout ce qui suit les repetitions (ruban du dessous, flancs) est de la geometrie
+            // fabriquee ici, pas de l'asset : elle n'a pas de slot d'origine et prend le bitume.
+            if (outSub != null)
+                for (int t = tn / 3; t < outSub.Length; t++) outSub[t] = groundSlot;
 
             // --- ruban du dessous ---
             // Une station = deux sommets (gauche/droite) a la largeur de la tuile. Le winding
@@ -519,9 +579,46 @@ namespace Gameplay.City
             if (outN != null) mesh.SetNormals(outN);
             if (outT != null) mesh.SetTangents(outT);
             if (outUV != null) mesh.SetUVs(0, outUV);
-            if (outTris != null) mesh.SetTriangles(outTris, 0, false);   // bounds faites juste apres
+            if (outTris != null)
+            {
+                if (outSub == null) mesh.SetTriangles(outTris, 0, false);   // bounds faites juste apres
+                else
+                {
+                    // Un sous-mesh VIDE est legal et volontaire : les slots sont les memes pour
+                    // tous les segments, donc l'ordre des materiaux du renderer est stable meme
+                    // quand un segment n'a ni passage pieton ni plaque d'egout.
+                    var buckets = new List<int>[subCount];
+                    for (int i = 0; i < subCount; i++) buckets[i] = new List<int>();
+                    for (int t = 0; t < outSub.Length; t++)
+                    {
+                        var b = buckets[Mathf.Clamp(outSub[t], 0, subCount - 1)];
+                        b.Add(outTris[t * 3]); b.Add(outTris[t * 3 + 1]); b.Add(outTris[t * 3 + 2]);
+                    }
+                    mesh.subMeshCount = subCount;
+                    for (int i = 0; i < subCount; i++) mesh.SetTriangles(buckets[i], i, false);
+                }
+            }
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        // Position d'un slot dans la table globale. -1 / table vide -> 0 : mieux vaut peindre au
+        // bitume qu'exploser sur un kit qui ne nommerait pas ses materiaux.
+        private static int SlotIndex(string[] slots, string name)
+        {
+            if (slots == null) return 0;
+            for (int i = 0; i < slots.Length; i++) if (slots[i] == name) return i;
+            return 0;
+        }
+
+        // Sous-mesh local -> slot global, par NOM. Null si la tuile n'a pas de noms : l'appelant
+        // retombe alors sur le bitume.
+        private static int[] SlotMap(string[] subNames, string[] slots)
+        {
+            if (subNames == null || slots == null) return null;
+            var map = new int[subNames.Length];
+            for (int i = 0; i < subNames.Length; i++) map[i] = SlotIndex(slots, subNames[i]);
+            return map;
         }
 
         // Tuile d'une repetition : la variante demandee si elle est valide, la tuile de base

@@ -63,6 +63,20 @@ namespace Gameplay.City
         [SerializeField] private GameObject deadEnd;
         [SerializeField] private GameObject roundabout;
 
+        // Un materiau par slot NOMME du kit. Les FBX arrivent avec leurs materiaux embarques
+        // (shader d'export, gris uniforme) : c'est ici qu'on rebranche les vrais.
+        [System.Serializable]
+        public class SlotMaterial
+        {
+            [Tooltip("Nom du materiau dans le FBX, ex. M_bitume")]
+            public string slot;
+            public Material material;
+        }
+
+        [Header("Materiaux par slot du kit")]
+        [Tooltip("Rempli au Reset depuis Assets/Materials/City. Un slot sans materiau retombe sur le materiau de route generique.")]
+        [SerializeField] private SlotMaterial[] slotMaterials;
+
         [Header("Convention des assets")]
         [Tooltip("Axe long de la tuile droite. Auto-detecte au Reset : la plus PETITE des 2 dimensions horizontales est la longueur.")]
         [SerializeField] private bool lengthOnZ = true;
@@ -200,6 +214,10 @@ namespace Gameplay.City
         [System.NonSerialized] private RoadMeshWarp.Tile tileFine;   // decoupee : pour les segments qui courbent
         [System.NonSerialized] private RoadMeshWarp.Tile[] variants;      // 0 normale, 1 pieton, 2 egouts
         [System.NonSerialized] private RoadMeshWarp.Tile[] variantsFine;
+        // Union des slots de la tuile droite et de ses variantes, dans un ordre stable : c'est
+        // l'ordre des sous-meshes de TOUS les segments, donc celui des materiaux du renderer.
+        [System.NonSerialized] private string[] slots;
+        [System.NonSerialized] private Material[] slotMats;
         // Fleche tolerée sur une longueur de tuile avant de passer a la tuile decoupee. Sous ce
         // seuil, une tuile pleine longueur est indiscernable de la courbe : inutile de payer
         // 5x les triangles. Une ligne droite, meme en pente, reste donc a la tuile brute.
@@ -1082,6 +1100,26 @@ namespace Gameplay.City
             // donc la plus petite dimension horizontale est la longueur.
             if (AssetBounds(tileStraight, out Bounds b))
                 lengthOnZ = b.size.z <= b.size.x;
+
+            // Correspondance slot du kit -> materiau du projet. Meme logique que les FBX
+            // ci-dessus : par chemin, pour que poser le composant suffise.
+            const string mats = "Assets/Materials/City/";
+            (string slot, string path)[] wiring =
+            {
+                ("M_bitume",          "City_Rue.mat"),
+                ("M_SolTrottoir",     "City_Trottoir.mat"),
+                ("M_BordureTrottoir", "City_Bordure.mat"),
+                ("M_Neon_Route",      "City_Neon_Route.mat"),
+                ("M_PassagePieton",   "City_PassagePieton.mat"),
+                ("M_plaqueEgouts",    "City_Egout.mat"),
+            };
+            slotMaterials = new SlotMaterial[wiring.Length];
+            for (int i = 0; i < wiring.Length; i++)
+                slotMaterials[i] = new SlotMaterial
+                {
+                    slot = wiring[i].slot,
+                    material = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>(mats + wiring[i].path),
+                };
 #endif
         }
 
@@ -1166,13 +1204,16 @@ namespace Gameplay.City
             // TileVariant et sert aussi bien au warp qu'au cycle de l'editeur.
             variants = new RoadMeshWarp.Tile[3];
             variantsFine = new RoadMeshWarp.Tile[3];
+            slots = null;
+            slotMats = null;
             PrepareVariant(1, tilePieton);
             PrepareVariant(2, tileEgouts);
-            if (!FirstMesh(tileStraight, out Mesh m, out Matrix4x4 toRoot)) return;
-            tile = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false);
-            tileFine = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true);
+            if (!FirstMesh(tileStraight, out Mesh m, out Matrix4x4 toRoot, out string[] subNames)) return;
+            tile = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false, subNames);
+            tileFine = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true, subNames);
             variants[0] = tile;
             variantsFine[0] = tileFine;
+            BuildSlotTable();
             if (!tile.valid)
                 Debug.LogWarning($"[RoadNetwork] Mesh de tuile illisible ou vide ({tileStraight?.name}). " +
                                  "Coche Read/Write Enabled sur le FBX (l'inspector du RoadNetwork propose un bouton).", this);
@@ -1180,9 +1221,42 @@ namespace Gameplay.City
 
         private void PrepareVariant(int index, GameObject asset)
         {
-            if (asset == null || !FirstMesh(asset, out Mesh m, out Matrix4x4 toRoot)) return;
-            variants[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false);
-            variantsFine[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true);
+            if (asset == null || !FirstMesh(asset, out Mesh m, out Matrix4x4 toRoot, out string[] subNames)) return;
+            variants[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, false, subNames);
+            variantsFine[index] = RoadMeshWarp.Prepare(m, toRoot, lengthOnZ, true, subNames);
+        }
+
+        // Table des slots du segment : l'union des noms portes par la tuile droite et ses
+        // variantes. Le bitume est force en tete parce qu'il sert de repli -- pour le dessous du
+        // tablier, pour les flancs, et pour tout slot qu'on ne saurait pas nommer.
+        private void BuildSlotTable()
+        {
+            var names = new List<string> { "M_bitume" };
+            foreach (var v in variants)
+                if (v.subNames != null)
+                    foreach (var s in v.subNames)
+                        if (!string.IsNullOrEmpty(s) && !names.Contains(s)) names.Add(s);
+
+            slots = names.ToArray();
+            slotMats = new Material[slots.Length];
+            for (int i = 0; i < slots.Length; i++) slotMats[i] = MaterialForSlot(slots[i]);
+        }
+
+        private Material MaterialForSlot(string slot)
+        {
+            if (slotMaterials != null)
+                foreach (var sm in slotMaterials)
+                    if (sm != null && sm.material != null && sm.slot == slot) return sm.material;
+            return RoadMat();
+        }
+
+        // Materiaux d'un renderer de segment, dans l'ordre des sous-meshes produits par le warp.
+        private Material[] SegmentMaterials()
+        {
+            if (slotMats == null || slotMats.Length == 0) return new[] { RoadMat() };
+            var mats = new Material[slotMats.Length];
+            for (int i = 0; i < mats.Length; i++) mats[i] = slotMats[i] != null ? slotMats[i] : RoadMat();
+            return mats;
         }
 
         // ---------------------------------------------------------------- variantes de tuile
@@ -1680,11 +1754,17 @@ namespace Gameplay.City
             inst.transform.localPosition = j.recenter;
             inst.transform.localRotation = Quaternion.identity;
 
-            Material mat = RoadMat();
+            // Les croisements sont instancies TELS QUELS : leurs sous-meshes survivent, il suffit
+            // de rebrancher slot par slot. On lit le nom du materiau embarque avant de l'ecraser,
+            // sinon on perdrait justement l'information qui dit lequel est le bitume et lequel
+            // est le marquage neon.
+            Material mat = MaterialForSlot("M_bitume");
             foreach (var mr in inst.GetComponentsInChildren<MeshRenderer>(true))
             {
-                var mats = new Material[mr.sharedMaterials.Length == 0 ? 1 : mr.sharedMaterials.Length];
-                for (int k = 0; k < mats.Length; k++) mats[k] = mat;
+                var src = mr.sharedMaterials;
+                var mats = new Material[src.Length == 0 ? 1 : src.Length];
+                for (int k = 0; k < mats.Length; k++)
+                    mats[k] = k < src.Length && src[k] != null ? MaterialForSlot(src[k].name) : mat;
                 mr.sharedMaterials = mats;
             }
             if (!dragging)
@@ -1907,10 +1987,18 @@ namespace Gameplay.City
                 go = new GameObject("Seg_" + k);
                 go.transform.SetParent(root, false);
                 mf = go.AddComponent<MeshFilter>();
-                go.AddComponent<MeshRenderer>().sharedMaterial = RoadMat();
+                go.AddComponent<MeshRenderer>();
                 go.hideFlags = GenFlags;
             }
             go.transform.localPosition = Vector3.up * SurfaceY;
+
+            // Assigne a CHAQUE build et pas seulement a la creation : le GameObject est recycle
+            // d'un rebuild a l'autre, il garderait sinon les materiaux d'un kit precedent. Un
+            // escalier et un egout sont generes de toutes pieces -> un seul materiau.
+            var mrSeg = go.GetComponent<MeshRenderer>();
+            mrSeg.sharedMaterials = segments[k].kind == SegmentKind.Route
+                ? SegmentMaterials()
+                : new[] { RoadMat() };
 
             var deck = default(RoadMeshWarp.Deck);
             Mesh mesh;
@@ -1941,7 +2029,7 @@ namespace Gameplay.City
                     bool fine = Curves(spline);
                     mesh = RoadMeshWarp.Warp(fine ? tileFine : tile, spline, mf.sharedMesh, deck,
                                              fine ? variantsFine : variants,
-                                             TilePicks(k, spline, deck.parapet > 0.001f));
+                                             TilePicks(k, spline, deck.parapet > 0.001f), slots);
                     break;
             }
             if (mesh == null) { DestroyChildren(go.transform); DestroyImmediate(go); return; }
@@ -2241,9 +2329,16 @@ namespace Gameplay.City
         // Premier mesh de l'asset + sa matrice vers la racine. Les SM_* n'ont qu'un mesh chacun ;
         // si un kit en avait plusieurs, seul le premier serait deforme.
         private static bool FirstMesh(GameObject go, out Mesh mesh, out Matrix4x4 toRoot)
+            => FirstMesh(go, out mesh, out toRoot, out _);
+
+        // `subNames` : le nom de materiau de chaque sous-mesh, lu sur le renderer de l'asset.
+        // C'est la seule chose qui relie un sous-mesh du FBX a un materiau du projet -- l'index
+        // ne suffit pas, les variantes ne rangent pas leurs slots dans le meme ordre.
+        private static bool FirstMesh(GameObject go, out Mesh mesh, out Matrix4x4 toRoot, out string[] subNames)
         {
             mesh = null;
             toRoot = Matrix4x4.identity;
+            subNames = null;
             if (go == null) return false;
             Matrix4x4 w2l = go.transform.worldToLocalMatrix;
             foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
@@ -2251,6 +2346,13 @@ namespace Gameplay.City
                 if (mf.sharedMesh == null) continue;
                 mesh = mf.sharedMesh;
                 toRoot = w2l * mf.transform.localToWorldMatrix;
+                var mr = mf.GetComponent<MeshRenderer>();
+                if (mr != null)
+                {
+                    var mats = mr.sharedMaterials;
+                    subNames = new string[mats.Length];
+                    for (int i = 0; i < mats.Length; i++) subNames[i] = mats[i] != null ? mats[i].name : null;
+                }
                 return true;
             }
             return false;

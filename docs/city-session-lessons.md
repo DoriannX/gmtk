@@ -571,3 +571,78 @@ seule lumière sur 113 change. Toujours filtrer explicitement :
 foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
     if (l.type == LightType.Directional) { ... }
 ```
+
+## Kit véhicules SM_* (scooter, vélo, moto, bus)
+
+Même logique que le kit routes : un modèle par FBX, aucune texture, juste des **slots
+de matériaux** `M_*` (`M_Carrosserie`, `M_Carosserie_2`, `M_Pneu`, `M_Neon`, `M_vitre`…).
+La peinture se fait côté Unity via `ModelImporter.AddRemap` — pas dans les prefabs.
+L'avantage : le remap survit à un ré-export du FBX, puisqu'il est indexé par **nom de
+slot**, pas par index de sous-mesh.
+
+**Échelles incohérentes dans un même lot.** `SM_Bus`, `SM_Scooter` et `SM_Velo` sont
+sortis en 1/100 (bus = 0.097 m de long), `SM_Bike` en unités métriques. Ne pas corriger
+au `localScale` du prefab : mettre `globalScale` dans l'importer, le prefab reste à 1 et
+colliders / Rigidbody / NavMeshObstacle n'ont pas à bouger. Facteur trouvé en comparant
+`mesh.bounds.size` à l'ancien mesh — ici exactement ×100, au dix-millième près.
+
+**Le pivot a bougé entre les deux générations.** Ancien kit : pivot centré, d'où le
+`Visual/Body.localPosition.y = +demi-hauteur` dans les prefabs. Nouveau kit : pivot au
+ras du sol. Recaler avec `body.localPosition.y = -mesh.bounds.min.y` (0 dans la plupart
+des cas, −0.121 pour le bus dont le point bas n'est pas à zéro). Sans ça le véhicule
+flotte d'une demi-hauteur, ce qui ne se voit pas sur un prefab isolé.
+
+**Tous les slots ne sont pas de la géométrie visible.** Sur `SM_Velo`, `M_Carosserie_2`
+(552 tris quand même) est *interne* : y mettre un néon ne produit rien à l'écran. Ne
+jamais choisir un slot sur son nom ou son nombre de triangles — faire un rendu de
+contrôle avec une couleur vive par sous-mesh (`_Unlit = 1`) et une légende, ça coûte
+un render et ça évite deux allers-retours.
+
+**La géométrie fine est mangée par l'outline.** Un cadre de vélo, des tubes, des rayons :
+à distance de jeu `OutlineEdgeDetect` recouvre la surface et la pièce lit noire quelle
+que soit sa couleur de base. Inutile d'éclaircir la teinte — porter la lisibilité sur la
+plus grande surface continue de l'objet. Pour le vélo, les **pneus** en néon : deux
+anneaux lumineux qui se lisent en mouvement là où le cadre disparaît.
+
+**Rig conservé lors d'un remplacement de modèle.** `SM_Bike` arrivait en un seul mesh
+soudé alors que `ArcadeCarController` câble `wheelVisual` + `wheelExtraParts`. Découpe
+faite dans Blender par sélection de faces par matériau (`M_Pneu` + `M_pneu_2` → turbine),
+`origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')` pour poser le pivot sur l'axe de
+rotation, puis reparentage sous la racine. Export FBX en `axis_forward='-Z'`,
+`axis_up='Y'`, `apply_scale_options='FBX_SCALE_NONE'` : on retombe sur la taille et
+l'orientation d'origine sans toucher au `globalScale`, et les remaps matériaux
+survivent puisqu'ils sont par nom.
+
+**Ambulance (`SM_Ambulance`)** — même profil que le reste du kit : ×100 exactement, pivot
+au sol, `Body.localPosition.y = 0`, collider inchangé. Particularité utile : elle porte
+**quatre** slots de néon (`M_Neon` panneau arrière 212 tris, `M_neon_4` bas de caisse,
+`M_Neon_3` barre avant, `M_neon_2` gyrophare) et un `M_Carrosserie` quasi vide (16 tris) —
+le corps est en fait sur `M_metal` et `M_metal_2`. Ne pas se fier au nom du slot pour
+deviner ce qui porte la couleur principale, vérifier le nombre de triangles.
+
+**Piège majeur du kit props : les renderers arrivent DÉSACTIVÉS.** Les objets étaient
+masqués dans Blender ; `importVisibility` (à `true` par défaut) reporte cet état dans
+Unity et le `MeshRenderer` est importé avec `enabled = false`. Le modèle apparaît dans
+le projet, ses matériaux sont corrects, ses bounds sont corrects — et il ne s'affiche
+nulle part. Symptôme trompeur : la scène de preview semble vide alors que tout est bien
+instancié. Correctif : `ModelImporter.importVisibility = false` sur tout le lot.
+
+**Ne jamais mesurer un prop sur `mesh.bounds`.** La racine du FBX porte souvent une
+échelle (0.398 sur le premier lot de props, 1.0 sur le second). `mesh.bounds` ignore
+cette échelle et donne des tailles 2,5× trop grandes — de quoi conclure à tort que le
+lot est hors échelle. La seule mesure juste est le `Renderer.bounds` combiné d'une
+instance posée en scène :
+```csharp
+var inst = (GameObject)PrefabUtility.InstantiatePrefab(modelAsset, holder);
+inst.transform.position = Vector3.zero;
+bool f = true; var acc = new Bounds();
+foreach (var r in inst.GetComponentsInChildren<MeshRenderer>(true))
+    { if (f) { acc = r.bounds; f = false; } else acc.Encapsulate(r.bounds); }
+```
+Repères d'échelle du projet : tuile de route 13 × 8 m, voiture PNJ 3.02 m, bus 9.71 m.
+
+**Prévisualiser un asset dans road.unity est piégeux.** La scène est un canyon de tours :
+posé à y=42 un prop est masqué par les immeubles, posé au niveau de la rue il tombe dans
+une zone d'ombre, et posé au-dessus de la ville il n'y a plus un seul néon pour l'éclairer
+donc tout sort noir. Recette qui marche : instancier très au-dessus (y=400) AVEC une
+directionnelle temporaire ajoutée sous le conteneur de preview, détruite avec lui.

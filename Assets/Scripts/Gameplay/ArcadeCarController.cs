@@ -235,6 +235,9 @@ namespace Gameplay
         // et boost actif decident du niveau de reaction du pieton percute.
         public float Speed { get { var v = rb.linearVelocity; v.y = 0f; return v.magnitude; } }
         public bool IsBoosting => boostTimer > 0f;
+        // Gaz brut du frame physique (-1 marche arriere .. +1 plein gaz), lu par les FX
+        // de tuyere. Ecrit avant le court-circuit grind pour rester valide sur un rail.
+        public float Throttle { get; private set; }
         public Rigidbody Body => rb;
         public void RampPop() => PunchScaleY(stretchOnJump); // juice quand un tremplin lance la voiture
 
@@ -338,6 +341,7 @@ namespace Gameplay
             Vector2 input = Input.Movement;
             float throttle = input.y;
             float steer = input.x;
+            Throttle = throttle;
 
             // GRIND : si colle a une arete, physique de rail exclusive -> on court-circuite tout le reste.
             if (UpdateGrind(dt, throttle, steer)) return;

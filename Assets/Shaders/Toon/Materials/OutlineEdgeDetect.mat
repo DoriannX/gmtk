@@ -25,13 +25,13 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _DepthSensitivity: 14
-    - _DepthThreshold: 1.1
+    - _DepthSensitivity: 10
+    - _DepthThreshold: 1.5
     - _InkJitter: 0
-    - _NormalSensitivity: 2
-    - _NormalThreshold: 0.45
-    - _OutlineThickness: 2.4
+    - _NormalSensitivity: 1.4
+    - _NormalThreshold: 0.7
+    - _OutlineThickness: 1.2
     m_Colors:
-    - _OutlineColor: {r: 0.05, g: 0.02, b: 0.11, a: 1}
+    - _OutlineColor: {r: 0.05, g: 0.02, b: 0.11, a: 0.7}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

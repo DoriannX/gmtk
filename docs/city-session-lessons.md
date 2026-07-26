@@ -646,3 +646,48 @@ posé à y=42 un prop est masqué par les immeubles, posé au niveau de la rue i
 une zone d'ombre, et posé au-dessus de la ville il n'y a plus un seul néon pour l'éclairer
 donc tout sort noir. Recette qui marche : instancier très au-dessus (y=400) AVEC une
 directionnelle temporaire ajoutée sous le conteneur de preview, détruite avec lui.
+
+## Recette d'export Blender → Unity « drop-in » (kit SM_Batiment + SM_Character)
+
+Objectif : un FBX qu'on pose dans `Assets/` sans **aucun** réglage à faire ensuite —
+racine à `scale 1`, `rotation identité`, pivot au centre XZ / base à `y=0`, taille métrique.
+Trois pièges se cumulent, chacun donne un symptôme différent :
+
+1. **Supprimer l'empty parent remet une matrice locale parasite.** Faire
+   `o.matrix_world = Identity` pendant que l'objet est **encore parenté** écrit
+   `matrix_basis = parent⁻¹`. Quand on supprime ensuite l'empty (`Batiments_Ok`,
+   rot X+90 & scale 0.01), l'enfant hérite de `Rx(-90)·100` → Unity réimporte une
+   racine à **scale 100 et rotation −90**. Ordre correct : baker `matrix_world` dans
+   les vertices, **puis `o.parent = None`, puis `matrix_basis = Identity`**, puis
+   supprimer les empties.
+2. **`apply_scale_options='FBX_SCALE_NONE'` met le facteur d'échelle dans le
+   transform de la racine** (« All Local ») → root à scale 100 côté Unity, et le
+   pinceau ville qui écrit `localScale = one * jitter` divise le bâtiment par 100.
+   Utiliser **`FBX_SCALE_UNITS`** : le facteur part dans l'unité du fichier, la racine
+   reste à 1. Côté importer : `useFileScale = true`, `globalScale = 1` (donc le
+   réglage Unity par défaut).
+3. **`bake_space_transform=False` laisse la conversion Z-up → Y-up dans le node**
+   → racine à `rotation X 270`. Invisible tant qu'on ne touche à rien, mais tout code
+   qui fait `localRotation = identity` (l'extracteur de prefabs le fait) **couche le
+   modèle**. Exporter avec **`bake_space_transform=True`** : la conversion part dans les
+   vertices, racine à l'identité. `ModelImporter.bakeAxisConversion` **ne répare pas**
+   ça côté Unity (il donne 90 au lieu de 270).
+
+Vérification obligatoire = **réimporter son propre export** et lire
+`root.localScale`, `root.localEulerAngles`, `bounds.min.y`, `bounds.center.xz`,
+après avoir forcé `localRotation = identity`. Les trois pièges ci-dessus sont passés
+inaperçus deux exports de suite sans ce contrôle.
+
+**Correspondance ancien lot ↔ nouveau kit : la mesurer, pas la deviner.** Les 11
+`SM_Batiment_XX` correspondent aux 11 prefabs de `Assets/Prefabs/City` **au centimètre
+près** (`Immeuble_02 = SM_Batiment_01`, `Immeuble_01 = SM_Batiment_02`, `Immeuble_03 =
+SM_Batiment_03`, `Immeuble_neon_01..03 = SM_Batiment_04..06`, `batiment_02..06 =
+SM_Batiment_07..11`). Comparer les `Renderer.bounds` des deux lots donne l'appariement
+sans ouvrir un seul render. Reconstruire les prefabs **sur le même chemin** conserve leur
+guid, donc les instances de `road.unity` et les entrées de `CityPalette` restent valides.
+
+**Deux instances Unity peuvent être connectées au MCP en même temps.** Ici `gmtk` et
+`gmtk - Copy` : sans `set_active_instance`, les appels partaient dans la copie et
+`FindAssets` renvoyait 0 alors que les fichiers étaient bien sur le disque. Symptôme qui
+ne trompe pas : `Application.dataPath` ne pointe pas sur le repo. Le vérifier **avant**
+d'écrire quoi que ce soit.

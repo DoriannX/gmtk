@@ -14,12 +14,7 @@ namespace Gameplay
         public Vector3 Start => transform.position - transform.forward * (length * 0.5f);
         public Vector3 End => transform.position + transform.forward * (length * 0.5f);
 
-        private void Awake()
-        {
-            var net = FindAnyObjectByType<GrindRailNetwork>();
-            if (net == null) net = new GameObject("GrindRailNetwork").AddComponent<GrindRailNetwork>();
-            net.AddPath(new[] { Start, End });
-        }
+        private void Awake() => GrindRailNetwork.Instance.AddPath(new[] { Start, End });
 
         private void OnValidate()
         {

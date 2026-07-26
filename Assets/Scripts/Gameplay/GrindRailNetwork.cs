@@ -8,11 +8,12 @@ namespace Gameplay
     // ca qui rend le grind robuste (chemin deterministe connu d'avance, contrairement a une
     // detection par-frame qui saute).
     //
-    // Deux sources, toutes deux DECLAREES et non devinees : les rails poses a la main (GrindRail)
-    // et les rambardes d'ouvrage (RoadNetwork, qui connait exactement ses splines). Il a existe un
-    // baker qui extrayait les aretes de tous les meshes de la scene : il rendait grindable un tas
-    // de choses qui n'avaient rien demande (marquages au sol, joints de dallage) et demandait un
-    // rebake apres chaque edition.
+    // Trois sources, toutes DECLAREES et non devinees : les rails poses a la main (GrindRail), les
+    // rambardes d'ouvrage (RoadNetwork, qui connait exactement ses splines) et les props qui
+    // portent un GrindRailSource (rails figes sur le prefab). Il a existe un baker qui extrayait
+    // les aretes de tous les meshes de la scene : il rendait grindable un tas de choses qui
+    // n'avaient rien demande (marquages au sol, joints de dallage) et demandait un rebake apres
+    // chaque edition.
     //
     // Query spatiale via grille XZ (cheap meme avec des milliers de segments en ville).
     public class GrindRailNetwork : MonoBehaviour
@@ -28,18 +29,57 @@ namespace Gameplay
         private List<Seg> segs;
         private float[] pathLen;
         private Dictionary<Vector2Int, List<int>> grid;
+        private bool dirty = true;
 
-        private void Awake() => Build();
+        // Polylignes REELLEMENT indexees : `paths` recollees bout a bout. Liste separee et non
+        // une reecriture de `paths`, pour deux raisons : `paths` est de la donnee d'auteur
+        // serialisee, la reecrire depuis Build la salirait a chaque entree en play mode ; et le
+        // recollage doit repartir des morceaux d'origine a chaque fois qu'un emetteur s'ajoute,
+        // pas d'un resultat deja recolle.
+        private List<Path> active;
 
-        // (Re)construit l'index a partir des polylignes. Appele au bake (editeur) et au Awake.
+        // Reseau unique de la scene, cree au besoin. Cache statique parce que les emetteurs
+        // s'enregistrent tous pendant le meme Awake : un FindAnyObjectByType chacun rendait
+        // l'enregistrement quadratique des qu'une rue portait quelques centaines de rambardes.
+        // La comparaison a null passe par la surcharge Unity -> un objet detruit (changement de
+        // scene, domain reload) est vu comme null et l'instance est recreee.
+        private static GrindRailNetwork instance;
+
+        public static GrindRailNetwork Instance
+        {
+            get
+            {
+                if (instance == null) instance = FindAnyObjectByType<GrindRailNetwork>();
+                if (instance == null) instance = new GameObject("GrindRails").AddComponent<GrindRailNetwork>();
+                return instance;
+            }
+        }
+
+        private void Awake()
+        {
+            instance = this;
+            dirty = true;
+        }
+
+        // (Re)construit l'index a partir des polylignes. Appele au bake (editeur), et sinon
+        // PARESSEUSEMENT a la premiere requete : tous les emetteurs se declarent pendant le
+        // meme Awake, reconstruire a chaque ajout coutait un index complet par rail.
         public void Build()
         {
+            dirty = false;
+
+            // Recollage AVANT indexation. C'est ce qui rattrape le fait que les rails arrivent
+            // en morceaux : une file de rambardes, chacune apportant son bout de 1.67 m, ressort
+            // d'ici en une seule ligne continue -- sinon la moto decrocherait a chaque element.
+            // Le cout porte sur les EXTREMITES des rails, pas sur des triangles.
+            active = GrindRailExtractor.JoinAdjacent(paths);
+
             segs = new List<Seg>();
             grid = new Dictionary<Vector2Int, List<int>>();
-            pathLen = new float[paths.Count];
-            for (int p = 0; p < paths.Count; p++)
+            pathLen = new float[active.Count];
+            for (int p = 0; p < active.Count; p++)
             {
-                var pts = paths[p].points;
+                var pts = active[p].points;
                 if (pts == null || pts.Length < 2) continue;
                 float s = 0f;
                 for (int i = 0; i < pts.Length - 1; i++)
@@ -55,12 +95,20 @@ namespace Gameplay
             }
         }
 
-        // Ajoute une polyligne a chaud (utilise par GrindRail, les rails poses a la main).
+        // Ajoute une polyligne a chaud (GrindRail, GrindRailSource). L'index n'est PAS rebati
+        // ici : il l'est a la premiere requete, une fois tout le monde enregistre.
         public void AddPath(Vector3[] points)
         {
             if (points == null || points.Length < 2) return;
             paths.Add(new Path { points = points });
-            Build();
+            dirty = true;
+        }
+
+        public void AddPaths(List<Path> more)
+        {
+            if (more == null) return;
+            foreach (var p in more)
+                if (p?.points != null && p.points.Length >= 2) { paths.Add(p); dirty = true; }
         }
 
         private void RasterizeToGrid(Vector3 a, Vector3 b, int segIdx)
@@ -85,7 +133,7 @@ namespace Gameplay
         public bool QueryNearest(Vector3 pos, float maxDist, out int path, out float s, out Vector3 point, out Vector3 tangent)
         {
             path = -1; s = 0f; point = pos; tangent = Vector3.forward;
-            if (segs == null) Build();
+            EnsureIndex();
             float best = maxDist * maxDist;
             bool found = false;
             int r = Mathf.CeilToInt(maxDist / cellSize);
@@ -112,13 +160,22 @@ namespace Gameplay
             return found;
         }
 
+        // L'index est reconstruit paresseusement, donc TOUT lecteur de pathLen doit passer par
+        // ici : sans ca, une requete arrivant apres un AddPath et avant le prochain Build lisait
+        // un pathLen plus court que paths et sortait des bornes.
+        private void EnsureIndex()
+        {
+            if (segs == null || dirty) Build();
+        }
+
         // Position + tangente a l'arc-length s sur un chemin. false si s hors [0,longueur] (bout de rail).
         public bool Sample(int path, float s, out Vector3 point, out Vector3 tangent)
         {
             point = Vector3.zero; tangent = Vector3.forward;
-            if (path < 0 || path >= paths.Count) return false;
+            EnsureIndex();
+            if (path < 0 || path >= active.Count) return false;
             if (s < 0f || s > pathLen[path]) return false;
-            var pts = paths[path].points;
+            var pts = active[path].points;
             float acc = 0f;
             for (int i = 0; i < pts.Length - 1; i++)
             {
@@ -136,7 +193,11 @@ namespace Gameplay
             return false;
         }
 
-        public float Length(int path) => (path >= 0 && path < pathLen.Length) ? pathLen[path] : 0f;
+        public float Length(int path)
+        {
+            EnsureIndex();
+            return (path >= 0 && path < pathLen.Length) ? pathLen[path] : 0f;
+        }
 
         private static Vector3 ClosestOnSeg(Vector3 p, Vector3 a, Vector3 b, out float t)
         {
@@ -149,8 +210,11 @@ namespace Gameplay
         // Gizmos : dessine tous les rails bakes. Cyan = ligne, points aux sommets, boules aux bouts.
         private void OnDrawGizmos()
         {
-            if (paths == null) return;
-            foreach (var p in paths)
+            // En play mode on dessine les rails RECOLLES : c'est la seule facon de voir d'un coup
+            // d'oeil si une file de rambardes forme bien une ligne unique ou une suite de bouts.
+            var shown = active ?? paths;
+            if (shown == null) return;
+            foreach (var p in shown)
             {
                 if (p?.points == null || p.points.Length < 2) continue;
                 Gizmos.color = Color.cyan;

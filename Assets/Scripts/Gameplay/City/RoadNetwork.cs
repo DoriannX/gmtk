@@ -1051,8 +1051,7 @@ namespace Gameplay.City
         private void DeclareGrindRails()
         {
             if (parapetHeight <= 0.01f) return;
-            var net = FindAnyObjectByType<GrindRailNetwork>();
-            if (net == null) net = new GameObject("GrindRailNetwork").AddComponent<GrindRailNetwork>();
+            var net = GrindRailNetwork.Instance;
 
             float top = SidewalkHeight + parapetHeight + SurfaceY;
             float half = RoadHalfWidth;

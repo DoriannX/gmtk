@@ -14,6 +14,7 @@ namespace Gameplay.EditorTools
     {
         const string PrefabDir = "Assets/Prefabs/City";
         const string PropDir = "Assets/Prefabs/City/Props";
+        const string PropSolDir = "Assets/Prefabs/City/PropsSol";
 
         private BrushLayer filter = BrushLayer.Batiments;
         private Vector2 scroll;
@@ -24,7 +25,9 @@ namespace Gameplay.EditorTools
 
             EditorGUILayout.LabelField(
                 $"{palette.CountUsable(BrushLayer.Batiments)} batiments / " +
-                $"{palette.CountUsable(BrushLayer.Props)} props utilisables",
+                $"{palette.CountUsable(BrushLayer.Props)} props sur batiments / " +
+                $"{palette.CountUsable(BrushLayer.PropsRue)} props de rue / " +
+                $"{palette.CountUsable(BrushLayer.PropsSol)} props au sol",
                 EditorStyles.boldLabel);
 
             EditorGUILayout.BeginHorizontal();
@@ -90,8 +93,20 @@ namespace Gameplay.EditorTools
             if (GUILayout.Button("S")) e.facadeYaw = 180f;
             if (GUILayout.Button("O")) e.facadeYaw = 270f;
             EditorGUILayout.EndHorizontal();
-            if (e.layer == BrushLayer.Props)
+            if (e.layer == BrushLayer.Props || e.layer == BrushLayer.PropsSol)
                 e.align = (PropAlign)EditorGUILayout.EnumPopup("collage", e.align);
+            if (e.layer == BrushLayer.PropsRue)
+            {
+                e.spacing = EditorGUILayout.FloatField("espacement (m)", e.spacing);
+                e.inset = EditorGUILayout.Slider("recul / bord (m)", e.inset, 0.2f, 3.5f);
+                e.grindable = EditorGUILayout.Toggle("grindable", e.grindable);
+                // On affiche le verdict au lieu de le laisser deviner : c'est lui qui decide si
+                // le prop forme une ligne continue ou du mobilier ponctuel, et il se retourne
+                // tout seul quand on bouge le curseur.
+                EditorGUILayout.LabelField(" ", e.Continu
+                    ? $"bout a bout (largeur {e.footprint.x:F2} m)"
+                    : $"ponctuel (largeur {e.footprint.x:F2} m)", EditorStyles.miniLabel);
+            }
             e.scaleJitter = EditorGUILayout.Slider("variation d'echelle", e.scaleJitter, 0f, 0.5f);
             EditorGUILayout.EndVertical();
             EditorGUILayout.EndHorizontal();
@@ -154,6 +169,10 @@ namespace Gameplay.EditorTools
             int added = 0;
             added += Scan(palette, PrefabDir, BrushLayer.Batiments, false);
             added += Scan(palette, PropDir, BrushLayer.Props, true);
+            // Un prop de sol inconnu atterrit en PropsSol et pas en PropsRue : au pire il attend
+            // qu'on le peigne, alors qu'en PropsRue le seeder l'aurait aligne sur TOUTES les rues
+            // de la ville des la prochaine passe.
+            added += Scan(palette, PropSolDir, BrushLayer.PropsSol, true);
             EditorUtility.SetDirty(palette);
             AssetDatabase.SaveAssets();
             Debug.Log($"[Ville] Rescan : {added} nouvelle(s) entree(s).");

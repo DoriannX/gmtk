@@ -361,7 +361,7 @@ namespace Gameplay.EditorTools
         // On ne peut pas deplacer le pivot d'un mesh : il faut decaler les ENFANTS. L'ORDRE est
         // la subtilite -- on met la racine a l'origine D'ABORD, sinon la remettre a zero apres
         // avoir decale les enfants les traine une seconde fois et le pivot finit n'importe ou.
-        private static Vector3 NormalizePivot(Transform g)
+        internal static Vector3 NormalizePivot(Transform g)
         {
             g.position = Vector3.zero;
 
@@ -390,7 +390,7 @@ namespace Gameplay.EditorTools
             return b.size;
         }
 
-        private static void AddColliders(Transform g)
+        internal static void AddColliders(Transform g)
         {
             // Un MeshCollider par mesh, non convexe (legal sur du statique). Un BoxCollider
             // racine -- l'approche de CityBuilder -- serait FAUX ici : son sommet serait celui de
@@ -509,13 +509,13 @@ namespace Gameplay.EditorTools
             return b;
         }
 
-        private static string Clean(string n)
+        internal static string Clean(string n)
         {
             n = Regex.Replace(n, "_{2,}", "_").Trim('_');
             return Regex.Replace(n, @"[^A-Za-z0-9_]", "_");
         }
 
-        private static void EnsureDir(string dir)
+        internal static void EnsureDir(string dir)
         {
             if (AssetDatabase.IsValidFolder(dir)) return;
             int cut = dir.LastIndexOf('/');

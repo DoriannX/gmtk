@@ -164,7 +164,10 @@ namespace Gameplay.City
 
         const float RowSampleStep = 0.5f;
 
-        public static RowPath BuildRowPath(CityBrush b, RoadNetwork net, int segment, int side, float offset)
+        // Aucun reglage de pinceau n'intervient ici : la polyligne ne depend que de la route et du
+        // decalage demande. C'est ce qui permet a CityPropsSeeder, qui n'a pas de CityBrush sous
+        // la main, de reutiliser exactement la meme geometrie de trottoir que le front de rue.
+        public static RowPath BuildRowPath(RoadNetwork net, int segment, int side, float offset)
         {
             if (net == null || segment < 0) return null;
             float len = net.SegmentLength(segment);
@@ -228,7 +231,7 @@ namespace Gameplay.City
                         for (int lane = 0; lane < b.lanes; lane++)
                         {
                             float offset = net.RoadHalfWidth + b.setback + lane * (b.laneDepth + b.laneGap);
-                            var path = BuildRowPath(b, net, k, side, offset);
+                            var path = BuildRowPath(net, k, side, offset);
                             if (path == null) continue;
                             WalkLane(b, path, ni, lane, outp);
                             if (outp.Count >= budget) return;
@@ -293,6 +296,217 @@ namespace Gameplay.City
                 if (Rand(h, 8) < b.holeChance) cursor += b.holeSize;
                 index++;
             }
+        }
+
+        // ---------------------------------------------------------------- mobilier de rue
+
+        // Desordre du mobilier PONCTUEL, jamais des lignes continues (voir WalkStreet).
+        const float RunChance = 0.45f;       // proportion de troncons qui recoivent une ligne continue
+        const float StepJitter = 0.35f;      // +-35 % sur le pas
+        const float SkipChance = 0.15f;      // probabilite de sauter une place
+        const float LateralJitter = 0.18f;   // metres de flottement perpendiculaire au trottoir
+
+        // PLAN DU MOBILIER DE RUE : lampadaires, poteaux, barrieres, bancs, cales sur les
+        // trottoirs de tout le reseau. Meme nature que BuildLaneCandidates -- un champ complet et
+        // deterministe, calcule d'un coup -- et c'est ce qui permet aux DEUX outils de s'en
+        // servir sans diverger : CityPropsSeeder l'instancie en entier d'un bouton, le pinceau
+        // n'en revele que ce qui tombe sous son disque. Meme graine -> meme ville dans les deux
+        // cas, et repasser le pinceau ne pose rien de plus.
+        public static void BuildStreetCandidates(CityPalette palette, int seed, RoadNetwork[] nets,
+                                                 int budget, List<Placement> outp)
+        {
+            if (palette == null || nets == null) return;
+
+            var continus = new List<CityPalette.Entry>();
+            var ponctuels = new List<CityPalette.Entry>();
+            foreach (var e in palette.entries)
+            {
+                if (e.layer != BrushLayer.PropsRue || !e.Usable) continue;
+                (e.Continu ? continus : ponctuels).Add(e);
+            }
+            if (continus.Count == 0 && ponctuels.Count == 0) return;
+
+            var placed = new List<Bounds>();
+
+            for (int ni = 0; ni < nets.Length; ni++)
+            {
+                var net = nets[ni];
+                if (net == null) continue;
+
+                for (int k = 0; k < net.SegmentCount; k++)
+                {
+                    for (int s = 0; s < 2; s++)
+                    {
+                        int side = s == 0 ? 1 : -1;
+
+                        // Une polyligne PAR RECUL, et non une seule pour tout le monde : c'est ce
+                        // qui range le trottoir en profondeur au lieu d'aligner lampadaires,
+                        // bancs et abribus sur le meme cordeau. Le cache evite de reechantillonner
+                        // le segment pour chaque prop -- les reculs distincts se comptent sur les
+                        // doigts d'une main, les entrees de palette non.
+                        var byInset = new Dictionary<int, RowPath>();
+                        RowPath PathFor(float inset)
+                        {
+                            int key = Mathf.RoundToInt(inset * 100f);
+                            if (byInset.TryGetValue(key, out var cached)) return cached;
+                            float off = net.RoadHalfWidth - inset;
+                            var built = off <= 0.1f ? null : BuildRowPath(net, k, side, off);
+                            byInset[key] = built;
+                            return built;
+                        }
+
+                        uint h = Hash(seed, ni * 4096 + k, side, 5501);
+
+                        // La ligne continue passe EN PREMIER : c'est elle qui doit rester
+                        // ininterrompue (une barriere trouee se lit comme un bug, et une ligne de
+                        // grind trouee fait decrocher). Le mobilier ponctuel se pose ensuite et
+                        // cede la place quand il tombe dessus -- perdre un lampadaire de temps en
+                        // temps ne se voit pas.
+                        if (continus.Count > 0 && Rand(h, 0) < RunChance)
+                        {
+                            var e = PickWeighted(continus, Rand(h, 1));
+                            var p = e != null ? PathFor(e.inset) : null;
+                            if (p != null) WalkStreet(e, p, net, 0f, h, 11, placed, outp, budget);
+                        }
+
+                        for (int i = 0; i < ponctuels.Count; i++)
+                        {
+                            var e = ponctuels[i];
+                            var p = PathFor(e.inset);
+                            if (p == null) continue;
+                            // Phase propre a (segment, cote, prop) : sans elle, tous les props
+                            // ponctuels d'une rue demarreraient au meme metre et s'empileraient au
+                            // debut de chaque troncon.
+                            float phase = Rand(h, 20 + i) * e.spacing;
+                            WalkStreet(e, p, net, phase, h, 40 + i * 8, placed, outp, budget);
+                        }
+
+                        if (outp.Count >= budget) return;
+                    }
+                }
+            }
+        }
+
+        // Parcourt un cote de segment et aligne `e` le long de la polyligne.
+        //
+        // Deux regimes, et la difference n'est PAS cosmetique :
+        //
+        //   CONTINU (barriere, rambarde) -> pas exact, aucun bruit, aucun trou. Le pas vaut la
+        //   largeur de l'element : le jitterer les ferait se chevaucher ou beer, et surtout la
+        //   ligne de grind se recouperait -- c'est ce qui a fait tomber une rue de 70 m a des
+        //   morceaux de 2.6 m lors du premier essai.
+        //
+        //   PONCTUEL (lampadaire, banc, poteau) -> pas bruite, places sautees, flottement
+        //   perpendiculaire. Rien ne s'enchaine, donc rien ne casse, et c'est ce qui empeche la
+        //   rue de battre la mesure.
+        private static void WalkStreet(CityPalette.Entry e, RowPath path, RoadNetwork net,
+                                       float phase, uint h, int salt,
+                                       List<Bounds> placed, List<Placement> outp, int budget)
+        {
+            float spacing = e.spacing;
+            if (spacing < 0.05f) return;
+            bool continu = e.Continu;
+            float offset = net.RoadHalfWidth - e.inset;   // distance nominale du prop a SON axe
+
+            // Les emprises de CE parcours sont mises de cote et versees dans `placed` a la fin,
+            // pour que la marche ne se rejette pas elle-meme.
+            //
+            // Sans ca la ligne continue se troue une fois sur trois : Footprint rend l'AABB de la
+            // boite TOURNEE, et en courbe deux barrieres voisines, chacune yawee differemment, ont
+            // des AABB qui se recouvrent alors que les rectangles reels ne se touchent pas. Le
+            // rejet en supprimait une, le trou de 2.6 m depassait le seuil de recollage des rails,
+            // et la ligne de grind tombait a 4 m au lieu de faire la rue. Les elements sont poses
+            // tous les `spacing` metres le long de la MEME polyligne : ils ne peuvent pas se
+            // chevaucher entre eux, c'est la geometrie du parcours qui le garantit.
+            var mine = new List<Bounds>();
+            int index = 0;
+
+            for (float s = phase; s <= path.total && outp.Count < budget; index++)
+            {
+                SampleRowPath(path, s, out Vector3 p, out Vector3 nr);
+                uint ph = Hash((int)h, salt, index, 991);
+
+                // Avance decidee ICI, avant tout rejet : la position suivante ne doit pas dependre
+                // du fait que celle-ci ait abouti, sinon un carrefour saute decalerait toute la
+                // suite de la rue.
+                float step = spacing;
+                if (!continu)
+                {
+                    step *= 1f + Signed(ph, 10) * StepJitter;
+                    if (Rand(ph, 11) < SkipChance) step += spacing;
+                    // `nr` sort du trottoir vers les batiments : le prop recule ou avance dans la
+                    // profondeur au lieu de rester colle au cordeau de son recul.
+                    p += nr * (Signed(ph, 12) * LateralJitter);
+                }
+                s += Mathf.Max(0.05f, step);
+
+                // Deux rejets, et il faut les DEUX : la polyligne suit l'axe d'UN segment et ne
+                // sait rien du reste du reseau.
+                if (net.ProbeRoad(p, 80f, out RoadNetwork.RoadProbe probe) && probe.valid)
+                {
+                    // 1. Emprise du carrefour, qui deborde bien au-dela de la demi-chaussee :
+                    //    quand le point le plus proche du reseau est un NOEUD, on est dedans.
+                    if (probe.node >= 0) continue;
+
+                    // 2. Chaussee d'une AUTRE rue. Aux abords d'un croisement la perpendiculaire
+                    //    passe a portee sans que son noeud soit le plus proche, et le prop se
+                    //    plantait au milieu de la voie transversale -- mesure avant correction :
+                    //    des barrieres a 0.08 m d'un axe, pour une chaussee large de 2.25. Sur son
+                    //    propre trottoir un prop est a `offset` de l'axe ; nettement plus pres
+                    //    d'un axe quelconque, c'est qu'il en mord un autre.
+                    if (probe.distance < offset - 0.5f) continue;
+                }
+
+                // AUCUNE variation d'echelle sur une ligne continue : une largeur qui varie de
+                // +-12 % fait deborder une barriere sur sa voisine, le rejet en supprime une, et
+                // le trou casse la ligne de grind. L'irregularite de ce lot vient des ruptures de
+                // famille d'un troncon a l'autre, pas de la taille des elements.
+                float sc = continu ? 1f : 1f + Signed(ph, 0) * Mathf.Min(0.9f, e.scaleJitter);
+                float w = Mathf.Max(0.15f, e.footprint.x * sc);
+                float d = Mathf.Max(0.15f, e.footprint.z * sc);
+
+                // -nr regarde la chaussee : le devant du prop lui fait face, comme une facade.
+                float yaw = Mathf.Atan2(-nr.x, -nr.z) * Mathf.Rad2Deg - e.facadeYaw;
+
+                var box = Footprint(p, yaw, w, d);
+                if (Overlaps(box, placed)) continue;
+
+                // Hauteur du trottoir, pas un raycast : la polyligne est echantillonnee sur l'AXE
+                // de la route, et SidewalkHeight est par definition l'elevation du trottoir
+                // au-dessus de cet axe. Un raycast dependrait des colliders generes et de l'ordre
+                // d'instanciation pour retrouver le meme nombre.
+                outp.Add(new Placement
+                {
+                    entry = e,
+                    position = new Vector3(p.x, p.y + net.SidewalkHeight, p.z),
+                    rotation = Quaternion.Euler(0f, yaw, 0f),
+                    scale = sc,
+                    footprintXZ = box,
+                });
+                mine.Add(box);
+            }
+
+            placed.AddRange(mine);
+        }
+
+        // Tirage pondere sur une SOUS-LISTE deja filtree. CityPalette.Pick balaie toute la
+        // palette par couche ; ici les deux familles de rue sont deja separees.
+        private static CityPalette.Entry PickWeighted(List<CityPalette.Entry> list, float u)
+        {
+            float total = 0f;
+            foreach (var e in list) total += e.weight;
+            if (total <= 0f) return null;
+
+            float target = Mathf.Clamp01(u) * total;
+            float acc = 0f;
+            CityPalette.Entry last = null;
+            foreach (var e in list)
+            {
+                last = e;
+                acc += e.weight;
+                if (target < acc) return e;
+            }
+            return last;
         }
 
         // ---------------------------------------------------------------- coeur d'ilot
@@ -395,13 +609,22 @@ namespace Gameplay.City
 
         // ---------------------------------------------------------------- props
 
-        // Saupoudrage sur une surface DEJA peinte (toit, facade). `ground` ne doit rendre que ce
-        // qui appartient au conteneur -> impossible de semer des props sur le sol ou la route.
-        public static void PropCandidates(CityBrush b, Vector3 center, int strokeId, int already,
-                                          GroundProbe ground, List<Bounds> placed, List<Placement> outp)
+        // Saupoudrage sur ce que `ground` accepte, et RIEN d'autre : c'est la sonde qui decide du
+        // domaine, pas cette fonction. Couche Props -> la sonde ne rend que le conteneur, donc on
+        // seme sur les toits et les facades deja peints. Couche PropsSol -> elle rend aussi le
+        // sol de la ville mais jamais la chaussee.
+        // Bruit de cap des props. Bien plus large que le yawJitter des batiments (5 deg) : une
+        // facade doit rester d'aplomb sur sa rangee, un baril non. Sans ce bruit l'alignement
+        // route arrondi a 90 deg fait du carrelage.
+        const float PropYawJitter = 15f;
+
+        public static void PropCandidates(CityBrush b, BrushLayer layer, Vector3 center,
+                                          int strokeId, int already,
+                                          GroundProbe ground, RoadProbeFn road,
+                                          List<Bounds> placed, List<Placement> outp)
         {
             if (b.palette == null || ground == null) return;
-            if (b.palette.CountUsable(BrushLayer.Props) == 0) return;
+            if (b.palette.CountUsable(layer) == 0) return;
 
             int attempts = Mathf.Clamp(
                 Mathf.CeilToInt(b.propDensity * Mathf.PI * b.radius * b.radius * 3f), 1, 300);
@@ -416,18 +639,32 @@ namespace Gameplay.City
                 var probe = new Vector3(center.x + Mathf.Cos(a) * rr, center.y, center.z + Mathf.Sin(a) * rr);
                 if (!ground(probe, out Vector3 pos, out Vector3 nrm)) continue;
 
-                var e = b.palette.Pick(BrushLayer.Props, Rand(h, 2));
+                var e = b.palette.Pick(layer, Rand(h, 2));
                 if (e == null) return;
 
                 float sc = 1f + Signed(h, 3) * Mathf.Min(0.9f, b.scaleJitter + e.scaleJitter);
                 float w = Mathf.Max(0.2f, e.footprint.x * sc);
                 float d = Mathf.Max(0.2f, e.footprint.z * sc);
-                float yaw = Rand(h, 4) * 360f;
+
+                // Cap aligne sur la rue, meme regle que les coeurs d'ilot de GridCandidates : la
+                // tangente de la route la plus proche tant qu'elle est a portee, les axes du
+                // monde au-dela, le tout arrondi au quart de tour. Un cap uniforme dans [0,360[
+                // -- ce qu'on faisait avant -- laissait les props plats (distributeur 0.51 de
+                // profondeur, benne) en travers de tout, alors qu'ils ont un DOS et se rangent
+                // le long de quelque chose.
+                float yaw = Mathf.Round(Rand(h, 4) * 4f) * 90f;
+                if (road != null && road(pos, b.alignRange, out RoadNetwork.RoadProbe rp)
+                    && rp.valid && rp.segment >= 0)
+                {
+                    yaw = Mathf.Atan2(rp.tangent.x, rp.tangent.z) * Mathf.Rad2Deg
+                        + Mathf.Round(Rand(h, 5) * 4f) * 90f;
+                }
+                yaw += Signed(h, 6) * PropYawJitter;
 
                 var box = Footprint(pos, yaw, w, d);
                 if (Overlaps(box, placed)) continue;
 
-                Quaternion rot = OrientProp(BrushLayer.Props, e, nrm, yaw, out _);
+                Quaternion rot = OrientProp(layer, e, nrm, yaw, out _);
                 outp.Add(new Placement
                 {
                     entry = e, position = pos, rotation = rot, scale = sc, footprintXZ = box,

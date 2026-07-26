@@ -19,9 +19,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 11.853174, y: 33.194714, z: 19.462366}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -178 -> 180 deg, confiance 0.02 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 2681274687919087827, guid: 8c3314fb174554a44a0660b3530efb6a, type: 3}
@@ -30,9 +32,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 12.052621, y: 30.419777, z: 19.138187}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -151 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 7189480819319736153, guid: 4c250b6946b07144ca054303a4680596, type: 3}
@@ -41,9 +45,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 8.684452, y: 30.419777, z: 14.120697}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -152 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 3106157644712801079, guid: af21eb1bc453dd3459ac8458ca6bd8fc, type: 3}
@@ -52,9 +58,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 90
     footprint: {x: 12.19386, y: 11.607853, z: 11.776562}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'FBX: Immeuble__01. facade auto 125 -> 90 deg, confiance 0.08 : A VERIFIER
       (batiment symetrique ?)'
   - prefab: {fileID: 4575978101723653180, guid: fc0de76657718ba4287877ccdba9f852, type: 3}
@@ -63,9 +71,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 10.479531, y: 11.607853, z: 10.481575}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: facade auto 166 -> 180 deg, confiance 0.11
   - prefab: {fileID: 3683763978634551931, guid: afd57ae8605c6b94fb95c4472c1c203f, type: 3}
     layer: 0
@@ -73,9 +83,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 11.296457, y: 16.011295, z: 10.970193}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: facade auto 141 -> 180 deg, confiance 0.09
   - prefab: {fileID: 567945928683435818, guid: e3b0bba16236fa544ad60b6068818901, type: 3}
     layer: 0
@@ -83,9 +95,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 8.718417, y: 32.556183, z: 8.270426}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto 161 -> 180 deg, confiance 0.04 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 6432085825534307061, guid: d6ef311cdb54912408c7ea87d33193f7, type: 3}
@@ -94,9 +108,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 270
     footprint: {x: 10.082897, y: 27.34985, z: 10.430155}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -81 -> 270 deg, confiance 0.04 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 1461427522242401450, guid: af8ef3be327a5cb4d9084ce4faae135a, type: 3}
@@ -105,9 +121,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 13.116526, y: 24.830471, z: 13.066232}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -144 -> 180 deg, confiance 0.02 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 3983197891153996076, guid: daa44fb89bee311499d3055810a613e6, type: 3}
@@ -116,9 +134,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 8.113227, y: 29.329075, z: 8.113225}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto -150 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 5730392603157874731, guid: b1d0b0559a3a6cf4c80edfc616a01f0d, type: 3}
@@ -127,9 +147,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 180
     footprint: {x: 8.449215, y: 20.21555, z: 10.342735}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'facade auto 159 -> 180 deg, confiance 0.01 : A VERIFIER (batiment symetrique
       ?)'
   - prefab: {fileID: 2429648482012378150, guid: 23a09912b56eff44b83417aaf57dd210, type: 3}
@@ -138,9 +160,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 6.240825, y: 5.0892715, z: 2.3094776}
-    site: 0
     align: 1
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Toit, collage : Normale'
   - prefab: {fileID: 8695557849332665037, guid: 63c6990f30af2764da4b9fb4597ca134, type: 3}
     layer: 1
@@ -148,9 +172,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 7.674838, y: 12.381833, z: 17.969225}
-    site: 1
     align: 2
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Facade, collage : Mur'
   - prefab: {fileID: 1778461185350043942, guid: 358e6e6f5465578418ef4a2815dce5bb, type: 3}
     layer: 1
@@ -158,9 +184,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 0.4133947, y: 1.4839687, z: 0.89616776}
-    site: 2
     align: 0
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Pied, collage : Sol'
   - prefab: {fileID: 4742875675869552792, guid: 45c2e4df7085f0f4f80fe4d01c844ca9, type: 3}
     layer: 1
@@ -168,9 +196,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 1.1339784, y: 6.234998, z: 10.010241}
-    site: 1
     align: 2
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Facade, collage : Mur'
   - prefab: {fileID: 6651530135850700525, guid: 2408ba077dd9e4348aeee7638a8dc659, type: 3}
     layer: 1
@@ -178,9 +208,11 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 1.329963, y: 1.112021, z: 0.14759207}
-    site: 2
     align: 0
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Pied, collage : Sol'
   - prefab: {fileID: 1067412359295320844, guid: 1da078eba298fe44ba6cf0cad8d6fdbf, type: 3}
     layer: 1
@@ -188,7 +220,309 @@ MonoBehaviour:
     weight: 1
     facadeYaw: 0
     footprint: {x: 0.35655403, y: 2.023638, z: 3.5824912}
-    site: 2
     align: 2
+    spacing: 8
+    inset: 1
     scaleJitter: 0.12
+    grindable: 0
     note: 'pose : Pied, collage : Mur'
+  - prefab: {fileID: 7215614811901364348, guid: 49b8c4f6364bf554e9f846cb2f8e1590, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.1227579, y: 5.822289, z: 1.1227587}
+    align: 0
+    spacing: 22
+    inset: 3
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 22.00 m, recul 3.00 m
+  - prefab: {fileID: 3419199534849598963, guid: 1054e6e960860ac4e8a2f3305001300f, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.5192873, y: 3.89878, z: 1.3246672}
+    align: 0
+    spacing: 26
+    inset: 3
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 26.00 m, recul 3.00 m
+  - prefab: {fileID: 3179193914776782111, guid: 84cb02b2c6cadb9418d06dcc642e2f9d, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.70430326, y: 2.0584745, z: 0.06581861}
+    align: 0
+    spacing: 30
+    inset: 3.1
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 30.00 m, recul 3.10 m
+  - prefab: {fileID: 8921813325365004696, guid: 1c7f73e8d6f1210479d65b6d10f7a517, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.4718134, y: 2.1008675, z: 1.2792693}
+    align: 0
+    spacing: 45
+    inset: 0.9
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 45.00 m, recul 0.90 m
+  - prefab: {fileID: 5577357631806413540, guid: a91c13f17dbd71b41948bc1d077a6c21, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 2.8443625, y: 2.0721707, z: 0.8853271}
+    align: 0
+    spacing: 90
+    inset: 0.8
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 90.00 m, recul 0.80 m
+  - prefab: {fileID: 5622322152745267380, guid: fb87226572175af42a5edc37bcb8009a, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.146148, y: 0.42992455, z: 1.146144}
+    align: 0
+    spacing: 12
+    inset: 2.2
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 12.00 m, recul 2.20 m
+  - prefab: {fileID: 8960632575587867433, guid: 13dce7d91f2cc644fa7556dc117e0708, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.083700284, y: 0.7757471, z: 0.08369517}
+    align: 0
+    spacing: 3
+    inset: 3.4
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 3.00 m, recul 3.40 m
+  - prefab: {fileID: 2372132379750584245, guid: 765fab95450921c4aa52e3fbdf650757, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.16073272, y: 0.7757471, z: 0.08369517}
+    align: 0
+    spacing: 3
+    inset: 3.4
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 3.00 m, recul 3.40 m
+  - prefab: {fileID: 2545819731610405408, guid: a088e74564b382744afc597e5b2b04b6, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 0.12539926, y: 0.7757471, z: 0.10063405}
+    align: 0
+    spacing: 3
+    inset: 3.4
+    scaleJitter: 0.12
+    grindable: 0
+    note: rue, tous les 3.00 m, recul 3.40 m
+  - prefab: {fileID: 7798758604747036887, guid: 39110ca605361cc4fae8440bd7d4a74d, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.6876144, y: 0.37592086, z: 1.3484764}
+    align: 0
+    spacing: 24
+    inset: 1.2
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 24.00 m, recul 1.20 m, grindable
+  - prefab: {fileID: 8060218908187265221, guid: 23b61abd30857d540a20767599e78492, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.6876144, y: 0.37592077, z: 0.5300331}
+    align: 0
+    spacing: 28
+    inset: 1.2
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 28.00 m, recul 1.20 m, grindable
+  - prefab: {fileID: 8206114631255182451, guid: 5ccd3989699e4ff43b42d6307b6ac40e, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.2814624, y: 0.90149105, z: 0.49188736}
+    align: 0
+    spacing: 1.3
+    inset: 3.3
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 1.30 m, recul 3.30 m, grindable
+  - prefab: {fileID: 3316931047186388885, guid: 2c02094d56ddd0b47ac6c95fe57ce73a, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.3060501, y: 0.8946054, z: 0.5035067}
+    align: 0
+    spacing: 1.33
+    inset: 3.3
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 1.33 m, recul 3.30 m, grindable
+  - prefab: {fileID: 6527157464748749719, guid: 56c5110314e44f945a028d5337ac511a, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.6687037, y: 0.8984212, z: 0.0957322}
+    align: 0
+    spacing: 1.67
+    inset: 3.25
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 1.67 m, recul 3.25 m, grindable
+  - prefab: {fileID: 1120304809896674982, guid: e16ac482ca9c7404a9211d07a08a2d49, type: 3}
+    layer: 2
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1, y: 0.64573413, z: 0.44068444}
+    align: 0
+    spacing: 1
+    inset: 3.25
+    scaleJitter: 0.12
+    grindable: 1
+    note: rue, tous les 1.00 m, recul 3.25 m, grindable
+  - prefab: {fileID: 3721835669197195222, guid: 50fbb316a94100547a4731f3f7a35757, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 4.410431, y: 6.2047377, z: 3.0569527}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 1441778897199475560, guid: e59eb4e72e2eb2b4993ff62e333a7c3f, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1.5
+    facadeYaw: 0
+    footprint: {x: 1.0136675, y: 1.0681026, z: 0.9369516}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 1425442081143131955, guid: 63a3c0da39827094abc654d918233315, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1
+    facadeYaw: 0
+    footprint: {x: 1.3268337, y: 1.1649059, z: 1.1224349}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 217221756594296420, guid: 8da12d9bcf7443849b0098a4d4477aa8, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1.5
+    facadeYaw: 0
+    footprint: {x: 0.5942453, y: 0.72000957, z: 0.5942451}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 271045831194820020, guid: fd0c9db29644a274c88b26a7f6f75a8e, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1.5
+    facadeYaw: 0
+    footprint: {x: 0.5892631, y: 0.71979916, z: 0.58926296}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 5482068049465137378, guid: f83397f46f935674494e03e5ad9afc32, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 0.8
+    facadeYaw: 0
+    footprint: {x: 1.9176023, y: 1.1391133, z: 0.93185157}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 6527292700426745210, guid: 01b695ee71389de4a984c8872bbe15d5, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 1.2
+    facadeYaw: 0
+    footprint: {x: 0.69474506, y: 0.81635344, z: 0.6947393}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 4984675637531239236, guid: 22b40eee9f588004aa73d4449b413554, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 0.8
+    facadeYaw: 0
+    footprint: {x: 0.9220002, y: 1.601229, z: 0.50667316}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 7263754870475867815, guid: 83eef76885478f449ab5626a4dcfcd94, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 0.6
+    facadeYaw: 0
+    footprint: {x: 2.0005736, y: 0.2172608, z: 0.21726099}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau
+  - prefab: {fileID: 3275336117278258828, guid: fbd4c77d13b79e44db4f83f2d09d82a2, type: 3}
+    layer: 3
+    enabled: 1
+    weight: 0.6
+    facadeYaw: 0
+    footprint: {x: 1.2027626, y: 0.26793063, z: 0.59334564}
+    align: 0
+    spacing: 8
+    inset: 1
+    scaleJitter: 0.12
+    grindable: 0
+    note: sol, au pinceau

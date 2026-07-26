@@ -48,6 +48,9 @@ namespace Gameplay.EditorTools
         // donc dans son emprise XZ. Les melanger revient a interdire tout prop.
         private readonly List<Bounds> placed = new List<Bounds>();       // batiments
         private readonly List<Bounds> propPlaced = new List<Bounds>();   // props
+        // Plan du mobilier de RUE, meme nature que lanePlan : un champ deterministe calcule au
+        // debut du trait, dont le disque ne fait que reveler une part.
+        private readonly List<CityBrushPlacement.Placement> streetPlan = new List<CityBrushPlacement.Placement>();
         private readonly List<CityBrushPlacement.Placement> buffer = new List<CityBrushPlacement.Placement>();
 
         private Vector3 cursorPos;
@@ -119,9 +122,7 @@ namespace Gameplay.EditorTools
         private void UpdateCursor(CityBrush brush, Event e)
         {
             Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
-            cursorValid = brush.layer == BrushLayer.Props
-                ? SurfaceRay(brush, ray, out cursorPos, out cursorNormal)
-                : GroundRay(brush, ray, out cursorPos, out cursorNormal);
+            cursorValid = Probe(brush, brush.layer, ray, out cursorPos, out cursorNormal);
         }
 
         // ---------------------------------------------------------------- entrees
@@ -168,7 +169,16 @@ namespace Gameplay.EditorTools
                     break;
                 case KeyCode.B:
                     Undo.RecordObject(brush, "Couche du pinceau");
-                    brush.layer = brush.layer == BrushLayer.Batiments ? BrushLayer.Props : BrushLayer.Batiments;
+                    // PropsRue n'est pas dans le cycle : elle se pose au bouton
+                    // (Tools/Ville/Props/Garnir les rues), pas a la souris.
+                    brush.layer = brush.layer switch
+                    {
+                        BrushLayer.Batiments => BrushLayer.Props,
+                        BrushLayer.Props => BrushLayer.PropsRue,
+                        BrushLayer.PropsRue => BrushLayer.PropsSol,
+                        _ => BrushLayer.Batiments,
+                    };
+                    streetPlan.Clear();   // le plan appartient a la couche qu'on quitte
                     break;
                 case KeyCode.R:
                     Undo.RecordObject(brush, "Regrainer la ville");
@@ -227,11 +237,21 @@ namespace Gameplay.EditorTools
 
             lanePlan.Clear();
             laneReserved.Clear();
-            if (!erasing && brush.layer == BrushLayer.Batiments)
+            streetPlan.Clear();
+            if (erasing) return;
+
+            if (brush.layer == BrushLayer.Batiments)
             {
                 CityBrushPlacement.BuildLaneCandidates(
                     brush, Object.FindObjectsByType<RoadNetwork>(FindObjectsSortMode.None), lanePlan);
                 foreach (var p in lanePlan) laneReserved.Add(p.footprintXZ);
+            }
+            else if (brush.layer == BrushLayer.PropsRue)
+            {
+                CityBrushPlacement.BuildStreetCandidates(
+                    brush.palette, brush.seed,
+                    Object.FindObjectsByType<RoadNetwork>(FindObjectsSortMode.None),
+                    brush.maxPerStroke * 8, streetPlan);
             }
         }
 
@@ -253,6 +273,7 @@ namespace Gameplay.EditorTools
             propPlaced.Clear();
             lanePlan.Clear();
             laneReserved.Clear();
+            streetPlan.Clear();
         }
 
         private void Paint(CityBrush brush, bool first)
@@ -274,15 +295,21 @@ namespace Gameplay.EditorTools
             }
 
             buffer.Clear();
-            if (brush.layer == BrushLayer.Props)
+            if (brush.layer == BrushLayer.PropsRue)
+            {
+                RevealStreet(brush);
+            }
+            else if (brush.layer != BrushLayer.Batiments)
             {
                 // `placed` (les BATIMENTS) ne doit surtout pas servir ici : un prop pose sur un
                 // toit est par construction DANS l'emprise XZ de son batiment, donc le rejet de
                 // chevauchement le tuerait a tous les coups. Un prop ne se compare qu'aux autres
                 // props.
+                BrushLayer layer = brush.layer;
                 CityBrushPlacement.PropCandidates(
-                    brush, cursorPos, strokeId, emitted,
-                    (Vector3 a, out Vector3 p, out Vector3 n) => SurfaceAt(brush, a, out p, out n),
+                    brush, layer, cursorPos, strokeId, emitted,
+                    (Vector3 a, out Vector3 p, out Vector3 n) => ProbeAt(brush, layer, a, out p, out n),
+                    (Vector3 w, float d, out RoadNetwork.RoadProbe pr) => NearestNetwork(w, d, out pr) != null,
                     propPlaced, buffer);
             }
             else
@@ -331,6 +358,29 @@ namespace Gameplay.EditorTools
             }
         }
 
+        // Revele le mobilier de rue du plan qui tombe sous le disque. Le rejet se fait contre les
+        // props DEJA EN SCENE (`propPlaced`), ce qui rend le geste idempotent : repasser au meme
+        // endroit ne double pas la rangee, et peindre une rue deja garnie au bouton ne pose rien.
+        //
+        // Contrairement a RevealCity, aucune hauteur a recalculer : le plan porte deja la cote du
+        // trottoir, mesuree sur la route et non sur un collider.
+        private void RevealStreet(CityBrush brush)
+        {
+            float r2 = brush.radius * brush.radius;
+            int budget = brush.maxPerStroke - emitted;
+
+            foreach (var p in streetPlan)
+            {
+                if (buffer.Count >= budget) return;
+                float dx = p.position.x - cursorPos.x, dz = p.position.z - cursorPos.z;
+                if (dx * dx + dz * dz > r2) continue;
+                if (CityBrushPlacement.Overlaps(p.footprintXZ, propPlaced)) continue;
+
+                buffer.Add(p);
+                propPlaced.Add(p.footprintXZ);
+            }
+        }
+
         private void Erase(CityBrush brush)
         {
             Transform c = brush.Container;
@@ -352,33 +402,13 @@ namespace Gameplay.EditorTools
 
         // ---------------------------------------------------------------- instanciation
 
+        // Instanciation deleguee a CityPropsSpawn, partagee avec le seeder : un prop peint et un
+        // prop seme doivent etre EXACTEMENT le meme objet (memes drapeaux statiques, meme
+        // enregistrement d'undo), sinon ils ne se comportent pas pareil au rendu.
         private void Spawn(CityBrush brush, CityBrushPlacement.Placement p)
         {
-            if (p.entry == null || p.entry.prefab == null) return;
-            Transform parent = EnsureContainer(brush);
-
-            // Surcharge (asset, parent) : un seul RegisterCreatedObjectUndo couvre alors la
-            // creation ET le parentage, on evite Undo.SetTransformParent qui pousserait ses
-            // propres enregistrements dans le groupe.
-            var go = (GameObject)PrefabUtility.InstantiatePrefab(p.entry.prefab, parent);
-            if (go == null) return;
-
-            // Transform pose AVANT l'enregistrement : l'undo detruit l'objet quel qu'il soit,
-            // donc les mutations pre-enregistrement n'ont pas besoin d'etre tracees. Le groupe
-            // reste a exactement N enregistrements pour N batiments.
-            go.transform.SetPositionAndRotation(p.position, p.rotation);
-            go.transform.localScale = Vector3.one * p.scale;
-
-            // Volontairement PAS ContributeGI : tous les FBX de ville ont generateSecondaryUV a
-            // 0, ca sortirait un avertissement "no lightmap UVs" par objet si la GI bakee est
-            // activee. CityBuilder fait isStatic = true (soit TOUS les flags) et s'en sort parce
-            // que la GI est eteinte -- ne pas heriter du bug latent.
-            GameObjectUtility.SetStaticEditorFlags(go,
-                StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic
-                | StaticEditorFlags.OccludeeStatic);
-
-            Undo.RegisterCreatedObjectUndo(go, "Peindre la ville");
-            EditorSceneManager.MarkSceneDirty(brush.gameObject.scene);
+            if (CityPropsSpawn.Spawn(p, EnsureContainer(brush), "Peindre la ville") != null)
+                EditorSceneManager.MarkSceneDirty(brush.gameObject.scene);
         }
 
         private static Transform EnsureContainer(CityBrush brush)
@@ -398,7 +428,20 @@ namespace Gameplay.EditorTools
         {
             placed.Clear();
             propPlaced.Clear();
-            Transform c = brush.Container;
+            Collect(brush, brush.Container);
+
+            // Le conteneur du SEEDER compte aussi. Sans lui, peindre du mobilier de rue sur une
+            // ville deja garnie au bouton reposait toute la rangee par-dessus elle-meme : les
+            // deux outils revelent le meme plan, donc aux memes endroits, et le rejet ne voyait
+            // rien.
+            foreach (var root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+                if (root.name == SeederContainer) Collect(brush, root.transform);
+        }
+
+        const string SeederContainer = "PropsRue";
+
+        private void Collect(CityBrush brush, Transform c)
+        {
             if (c == null) return;
             foreach (Transform t in c)
             {
@@ -415,7 +458,7 @@ namespace Gameplay.EditorTools
             if (palette == null) return false;
             GameObject src = PrefabSource(t.gameObject);
             var e = src != null ? palette.Find(src) : null;
-            return e != null && e.layer == BrushLayer.Props;
+            return e != null && e.layer != BrushLayer.Batiments;
         }
 
         // Le prefab d'origine d'une instance : c'est lui qui donne l'entree de palette, donc
@@ -480,11 +523,92 @@ namespace Gameplay.EditorTools
             return found;
         }
 
+        // Couche PropsSol : le sol de la ville ET LES TROTTOIRS, mais jamais la chaussee.
+        //
+        // Le trottoir est le cas qui demande du soin, et deux pieges s'y cumulent :
+        //
+        //   1. `probe.inside` ne peut pas servir de rejet. RoadHalfWidth vaut 6.5 m TROTTOIRS
+        //      COMPRIS, donc "dans l'emprise" est vrai sur toute la bande 0-6.5 et rejeter
+        //      la-dessus interdisait aussi le trottoir (2.75-6.5) -- soit exactement l'endroit ou
+        //      on veut poser une benne. Ce qui distingue vraiment les deux, c'est que le trottoir
+        //      est SURELEVE de SidewalkHeight au-dessus de l'axe. C'est ce qu'on mesure.
+        //
+        //   2. GroundRay ecarte les colliders de route, donc au-dessus d'un trottoir il rend le
+        //      sol de la ville qui passe DESSOUS (0.180 contre 0.196 mesures sur Game) et le prop
+        //      s'enfoncait de 1.6 cm. Ici on garde le point de la route quand c'est un trottoir.
+        //
+        // Un seul RaycastAll pour les deux : les touches de route etaient deja parcourues et
+        // jetees, on se contente de retenir la meilleure au lieu de l'oublier.
+        private static bool GroundOrSidewalkRay(CityBrush brush, Ray r, out Vector3 pos, out Vector3 normal)
+        {
+            pos = Vector3.zero;
+            normal = Vector3.up;
+            Transform container = brush.Container;
+
+            bool hasGround = false, hasRoad = false;
+            float bestGround = float.MaxValue, bestRoad = float.MaxValue;
+            Vector3 gp = Vector3.zero, gn = Vector3.up, rp = Vector3.zero, rn = Vector3.up;
+
+            foreach (var h in Physics.RaycastAll(r, RayLength))
+            {
+                if (container != null && h.collider.transform.IsChildOf(container)) continue;
+                if (h.collider.GetComponentInParent<RoadNetwork>() != null)
+                {
+                    if (h.distance >= bestRoad) continue;
+                    bestRoad = h.distance; rp = h.point; rn = h.normal; hasRoad = true;
+                }
+                else
+                {
+                    if (h.distance >= bestGround) continue;
+                    bestGround = h.distance; gp = h.point; gn = h.normal; hasGround = true;
+                }
+            }
+
+            // La route est touchee AVANT le sol des qu'on vise un trottoir (il le surplombe), donc
+            // c'est bien elle qui tranche quand les deux repondent.
+            if (hasRoad && bestRoad <= bestGround)
+            {
+                RoadNetwork net = NearestNetwork(rp, 200f, out RoadNetwork.RoadProbe probe);
+                if (net != null && probe.valid)
+                {
+                    // Moitie de la hauteur de bordure comme seuil : franc des deux cotes, et
+                    // tolerant a la pente d'une rue qui monte.
+                    if (rp.y - probe.point.y < net.SidewalkHeight * 0.5f) return false;   // chaussee
+                    pos = rp; normal = rn;                                                // trottoir
+                    return true;
+                }
+            }
+
+            if (hasGround) { pos = gp; normal = gn; return true; }
+
+            // Plan de secours : une scene de travail n'a pas forcement de sol.
+            var plane = new Plane(Vector3.up, new Vector3(0f, brush.groundHeight, 0f));
+            if (!plane.Raycast(r, out float dPlane)) return false;
+            pos = r.GetPoint(dPlane);
+            normal = Vector3.up;
+            return true;
+        }
+
+        // La sonde EST la couche : c'est elle, et pas la fonction de semis, qui definit ou un
+        // prop a le droit de tomber.
+        private static bool Probe(CityBrush brush, BrushLayer layer, Ray r,
+                                  out Vector3 pos, out Vector3 normal)
+            => layer switch
+            {
+                BrushLayer.Props => SurfaceRay(brush, r, out pos, out normal),
+                BrushLayer.PropsSol => GroundOrSidewalkRay(brush, r, out pos, out normal),
+                // PropsRue passe par GroundRay comme les batiments : le curseur n'est qu'une
+                // position de disque, les cotes viennent du plan. Une sonde qui refuserait la
+                // chaussee ferait disparaitre le disque au milieu de la rue qu'on veut garnir.
+                _ => GroundRay(brush, r, out pos, out normal),
+            };
+
         private static bool GroundAt(CityBrush brush, Vector3 approx, out Vector3 pos, out Vector3 normal)
             => GroundRay(brush, new Ray(approx + Vector3.up * 500f, Vector3.down), out pos, out normal);
 
-        private static bool SurfaceAt(CityBrush brush, Vector3 approx, out Vector3 pos, out Vector3 normal)
-            => SurfaceRay(brush, new Ray(approx + Vector3.up * 500f, Vector3.down), out pos, out normal);
+        private static bool ProbeAt(CityBrush brush, BrushLayer layer, Vector3 approx,
+                                    out Vector3 pos, out Vector3 normal)
+            => Probe(brush, layer, new Ray(approx + Vector3.up * 500f, Vector3.down), out pos, out normal);
 
         private static float GroundY(CityBrush brush, Vector3 approx)
             => GroundAt(brush, approx, out Vector3 p, out _) ? p.y : brush.groundHeight;
@@ -515,31 +639,36 @@ namespace Gameplay.EditorTools
             // retour, viser le sol ne donnait AUCUN signe -- on croyait l'outil casse.
             if (!cursorValid)
             {
-                if (brush.layer != BrushLayer.Props) return;
+                if (brush.layer == BrushLayer.Batiments) return;
                 Ray r = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
                 if (!GroundRay(brush, r, out Vector3 gp, out Vector3 gn)) return;
                 Handles.color = new Color(1f, 0.5f, 0.2f, 0.55f);
                 Handles.DrawWireDisc(gp, gn, brush.radius, 2f);
-                Handles.Label(gp, "vise un batiment deja peint");
+                Handles.Label(gp, brush.layer == BrushLayer.Props
+                    ? "vise un batiment deja peint"
+                    : "sur la chaussee — vise le trottoir ou le sol");
                 return;
             }
 
             Color c = erasing ? new Color(1f, 0.35f, 0.28f)
                     : brush.layer == BrushLayer.Props ? new Color(0.6f, 1f, 0.45f)
+                    : brush.layer == BrushLayer.PropsSol ? new Color(1f, 0.85f, 0.35f)
+                    : brush.layer == BrushLayer.PropsRue ? new Color(1f, 0.55f, 0.9f)
                     : new Color(0.35f, 0.95f, 1f);
             Handles.color = new Color(c.r, c.g, c.b, 0.08f);
             Handles.DrawSolidDisc(cursorPos, cursorNormal, brush.radius);
             Handles.color = c;
             Handles.DrawWireDisc(cursorPos, cursorNormal, brush.radius, 2f);
 
-            if (erasing || brush.layer == BrushLayer.Props) return;
+            if (erasing || brush.layer == BrushLayer.Props || brush.layer == BrushLayer.PropsSol) return;
 
             // Fantomes du plan sous le disque : on voit ce qui VA sortir avant de cliquer, ce qui
-            // rend le geste dirigeable au lieu d'etre une surprise.
+            // rend le geste dirigeable au lieu d'etre une surprise. Les deux couches a plan --
+            // batiments et mobilier de rue -- s'affichent pareil.
             float r2 = brush.radius * brush.radius;
             Handles.color = new Color(1f, 0.85f, 0.2f, 0.55f);
             int shown = 0;
-            foreach (var p in lanePlan)
+            foreach (var p in brush.layer == BrushLayer.PropsRue ? streetPlan : lanePlan)
             {
                 float dx = p.position.x - cursorPos.x, dz = p.position.z - cursorPos.z;
                 if (dx * dx + dz * dz > r2) continue;
@@ -562,13 +691,21 @@ namespace Gameplay.EditorTools
             }
             else
             {
-                GUILayout.Label(brush.layer == BrushLayer.Props ? "Pinceau ville — PROPS" : "Pinceau ville",
-                                EditorStyles.boldLabel);
+                GUILayout.Label(brush.layer switch
+                {
+                    BrushLayer.Props => "Pinceau ville — PROPS (sur batiments)",
+                    BrushLayer.PropsRue => "Pinceau ville — MOBILIER DE RUE",
+                    BrushLayer.PropsSol => "Pinceau ville — PROPS AU SOL",
+                    _ => "Pinceau ville",
+                }, EditorStyles.boldLabel);
                 GUILayout.Label($"rayon {brush.radius:F0} m   graine {brush.seed}   pose {emitted}",
                                 EditorStyles.miniLabel);
+                if (brush.layer == BrushLayer.PropsRue)
+                    GUILayout.Label("aligne sur les trottoirs, comme Tools/Ville/Props/3",
+                                    EditorStyles.miniLabel);
                 GUILayout.Label("glisser : peindre   Ctrl+glisser : effacer\n" +
                                 "Maj+molette ou [ ] ou - = : rayon\n" +
-                                "B : batiments/props   R : nouvelle ville",
+                                "B : batiments / props / rue / sol   R : nouvelle ville",
                                 EditorStyles.miniLabel);
             }
 

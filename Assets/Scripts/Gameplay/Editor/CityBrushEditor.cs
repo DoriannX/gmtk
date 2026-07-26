@@ -205,7 +205,10 @@ namespace Gameplay.EditorTools
                     var centre = new Vector3(
                         Mathf.Lerp(bb.min.x, bb.max.x, (i + 0.5f) / steps), bb.center.y,
                         Mathf.Lerp(bb.min.z, bb.max.z, (j + 0.5f) / steps));
-                    CityBrushPlacement.PropCandidates(brush, centre, i * 100 + j, outp.Count, surf, placed, outp);
+                    // Pas de sonde de route : ce test-ci saupoudre des TOITS, ou le cap par
+                    // rapport a la rue ne veut rien dire. Le cap reste tire au quart de tour.
+                    CityBrushPlacement.PropCandidates(brush, BrushLayer.Props, centre,
+                                                      i * 100 + j, outp.Count, surf, null, placed, outp);
                 }
 
             Spawn(brush, outp, "Saupoudrer des props");

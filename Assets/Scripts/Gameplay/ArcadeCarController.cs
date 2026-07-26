@@ -238,6 +238,8 @@ namespace Gameplay
         // Gaz brut du frame physique (-1 marche arriere .. +1 plein gaz), lu par les FX
         // de tuyere. Ecrit avant le court-circuit grind pour rester valide sur un rail.
         public float Throttle { get; private set; }
+        // Charge du burnout, 0..1 : le tuto en fait une barre de progression.
+        public float BurnoutCharge01 => burnoutMaxCharge > 0f ? burnoutCharge / burnoutMaxCharge : 0f;
         public Rigidbody Body => rb;
         public void RampPop() => PunchScaleY(stretchOnJump); // juice quand un tremplin lance la voiture
 

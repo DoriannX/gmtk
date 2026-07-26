@@ -764,6 +764,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 6336356079793279581, guid: 143dd1312821f1e49bec92a14c260f6d, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1503246608}
+    - targetCorrespondingSourceObject: {fileID: 6336356079793279581, guid: 143dd1312821f1e49bec92a14c260f6d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1503246613}
   m_SourcePrefab: {fileID: 100100000, guid: 143dd1312821f1e49bec92a14c260f6d, type: 3}
 --- !u!4 &1503246606 stripped
 Transform:
@@ -861,10 +864,30 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Gameplay.GrindBalanceHud
   car: {fileID: 0}
   radius: 92
+  innerRatio: 0.65
   needleWidth: 10
   maxAngle: 72
   screenOffset: {x: 230, y: -20}
   dial: -1
+--- !u!114 &1503246613
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1503246607}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8abd7d571c58074ba4d732f49705ec4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Gameplay.TutorialFlow
+  introTime: 0.6
+  celebrateTime: 0.9
+  calloutDwell: 3.5
+  nudgeAfter: 8
+  outroTime: 1.4
+  skipHold: 0.6
+  alwaysShow: 0
 --- !u!1001 &1729217083
 PrefabInstance:
   m_ObjectHideFlags: 0

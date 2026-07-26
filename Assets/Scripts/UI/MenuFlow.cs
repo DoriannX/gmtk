@@ -50,7 +50,7 @@ namespace UI
 
         private static readonly string[] MenuItems = { "Play", "Options", "Quit" };
         private static readonly string[] PauseItems = { "Resume", "Options", "Menu" };
-        private static readonly string[] OptionItems = { "...", "...", "Return" };
+        private static readonly string[] OptionItems = { "Revoir le tuto", "Oublier le tuto", "Return" };
 
         private void Awake()
         {
@@ -145,9 +145,22 @@ namespace UI
                     else ToMenu();
                     break;
                 case Panel.Options:
-                    if (i == OptionItems.Length - 1) Open(returnTo);   // les "..." ne font rien : placeholder
+                    if (i == 0) ReplayTutorial();
+                    else if (i == 1) TutorialFlow.ForgetSave();
+                    else Open(returnTo);
                     break;
             }
+        }
+
+        // "Revoir le tuto" : en ACCELERE (memes etapes, memes conditions, sans les temps
+        // morts). Depuis la scene de jeu le tuto est deja en scene -> on le relance et on rend
+        // la main tout de suite, sinon on regarderait le menu par-dessus. Depuis Menu.unity il
+        // n'y a rien a relancer : le drapeau statique arme la partie suivante.
+        private void ReplayTutorial()
+        {
+            bool live = TutorialFlow.Instance != null;
+            TutorialFlow.RequestReplay(true);
+            if (live) Resume();
         }
 
         private void Open(Panel p)

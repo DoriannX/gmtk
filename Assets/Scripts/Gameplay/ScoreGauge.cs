@@ -44,6 +44,10 @@ namespace Gameplay
         // referenceHeight de haut, puis mis a l'echelle.
         [SerializeField] private float referenceHeight = 1080f;
 
+        // Coin du bloc en unites de design : le tuto s'en sert pour encadrer la vraie jauge
+        // au lieu d'en redessiner une copie a cote.
+        public Vector2 ScreenPos => screenPos;
+
         public float Value { get; private set; }
         public int Earned { get; private set; }
 

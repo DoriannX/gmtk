@@ -12,6 +12,8 @@ namespace Gameplay
     // Rendu OnGUI -> zero Canvas, comme ScoreGauge / GrindBalanceHud / TrickHud.
     public class RunHud : MonoBehaviour
     {
+        public static RunHud Instance { get; private set; }
+
         [SerializeField] private TrickSystem tricks;
 
         [Header("Placement (unites de design, cf referenceHeight)")]
@@ -29,9 +31,19 @@ namespace Gameplay
         private float t;
         private bool rush;
 
+        // Coin du bloc "colis restants" en unites de design : le tuto s'en sert pour encadrer
+        // le vrai compteur au lieu de redessiner une copie a cote.
+        public Vector2 ScreenPos => screenPos;
+
         private void Awake()
         {
+            Instance = this;
             if (tricks == null) tricks = FindAnyObjectByType<TrickSystem>();
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this) Instance = null;
         }
 
         private void OnDisable()

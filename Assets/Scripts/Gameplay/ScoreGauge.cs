@@ -34,8 +34,9 @@ namespace Gameplay
         [SerializeField] private TrickSystem tricks;
 
         [Header("Placement (unites de design, cf referenceHeight)")]
-        // sous le DebugOverlay (~DebugOverlay), qui occupe le coin haut-gauche
-        [SerializeField] private Vector2 screenPos = new Vector2(28f, 120f);
+        // Coordonnees de la maquette Figma : barre 420x38 posee en (119, 75), pastille
+        // d'icone 75x75 en (57, 56). screenPos est le coin du BLOC (la barre est a +20 en y).
+        [SerializeField] private Vector2 screenPos = new Vector2(119f, 55f);
         [SerializeField] private float width = 420f;
         [SerializeField] private float height = 38f;
         // OnGUI travaille en pixels bruts : sans mise a l'echelle, la jauge devient un
@@ -94,7 +95,11 @@ namespace Gameplay
         private float gainFloatT = -1f;
         private int gainFloat;        // signe : positif = gain, negatif = penalite
         private float t, shownValue;
-        private Texture2D disc;
+
+        // Couleurs de la maquette Figma (jauge de score).
+        private static readonly Color GradA = new Color(0.861f, 0.270f, 0.165f);   // #DC4529, cote vide
+        private static readonly Color GradB = new Color(1f, 0.917f, 0f);           // #FFEA00, cote plein
+        private static readonly Color IconGrey = new Color(0.851f, 0.851f, 0.851f);
 
         private void Awake()
         {
@@ -104,7 +109,6 @@ namespace Gameplay
             lastTrickTotal = tricks != null ? tricks.Total : 0;
             Value = Mathf.Max(0f, startValue);
             shownValue = Value;
-            disc = MakeDisc(64);
         }
 
         // Tous les kills passent par ce hub (pieton comme pigeon) : un seul branchement
@@ -178,52 +182,46 @@ namespace Gameplay
             GUIUtility.ScaleAroundPivot(new Vector2(s, s), new Vector2(x + width * 0.5f, y + 20f));
 
             var frame = new Rect(x, y + 20f, width, height);
-            Color hot = Color.Lerp(new Color(1f, 0.25f, 0.2f), new Color(1f, 0.85f, 0.2f), Mathf.InverseLerp(0f, 0.5f, f));
-            Color fillCol = Color.Lerp(hot, new Color(0.3f, 1f, 0.55f), Mathf.InverseLerp(0.5f, 1f, f));
-            // Grosse avance : la barre passe a l'or et le cadre bat. Sans ca, une fois la barre
-            // pleine le joueur croirait que ses points ne comptent plus.
-            if (over > 0f)
-                fillCol = Color.Lerp(fillCol, new Color(1f, 0.88f, 0.35f),
-                                     Mathf.Clamp01(0.45f + 0.55f * over) * (0.75f + 0.25f * Mathf.Sin(t * 5f)));
-            Color accent = Color.Lerp(fillCol, Color.white, 0.35f + 0.5f * gainPop + 0.3f * over);
-            // bavure : tout le cadre vire au rouge le temps du flash
-            if (penaltyPop > 0f) accent = Color.Lerp(accent, new Color(1f, 0.15f, 0.2f), penaltyPop);
+            EnsureTextures();
+
+            // Couleur du bout de barre : c'est le degrade de la maquette lu a l'endroit du
+            // remplissage. Sert au halo et au "+N", pour que le juice reste raccord.
+            Color tip = Color.Lerp(GradA, GradB, f);
+            // bavure : tout le contour vire au rouge le temps du flash
+            Color edge = penaltyPop > 0f
+                ? Color.Lerp(Color.black, new Color(1f, 0.15f, 0.2f), penaltyPop)
+                : Color.black;
+
+            // Pastille d'icone de la maquette (75x75, calee a gauche et chevauchant la barre).
+            // Reste un aplat gris tant que l'illustration n'est pas fournie -- c'est aussi
+            // l'etat du Figma.
+            Round(new Rect(frame.x - 62f, frame.center.y - 37.5f, 75f, 75f), IconGrey);
 
             // halo, respire quand ca va mal
-            Fill(new Rect(frame.x - 6f, frame.y - 6f, frame.width + 12f, frame.height + 12f),
-                 new Color(fillCol.r, fillCol.g, fillCol.b, 0.16f + 0.35f * gainPop + 0.25f * alarm));
+            Round(new Rect(frame.x - 6f, frame.y - 6f, frame.width + 12f, frame.height + 12f),
+                  new Color(tip.r, tip.g, tip.b, 0.16f + 0.35f * gainPop + 0.25f * alarm));
 
-            Fill(frame, new Color(0.05f, 0.06f, 0.12f, 0.94f));          // fond
-            Fill(new Rect(frame.x, frame.y, frame.width, 2f), new Color(1f, 1f, 1f, 0.10f));  // reflet haut
+            Round(frame, edge);                                            // cadre noir 3 px
+            var inner = new Rect(frame.x + 3f, frame.y + 3f, frame.width - 6f, frame.height - 6f);
+            Round(inner, new Color(0.05f, 0.06f, 0.12f, 0.94f));           // fond de la partie vide
 
-            // REMPLISSAGE + hachures diagonales qui defilent (lecture cartoon)
-            var bar = new Rect(frame.x + 3f, frame.y + 3f, (frame.width - 6f) * f, frame.height - 6f);
-            Fill(bar, fillCol);
-            Fill(new Rect(bar.x, bar.y, bar.width, bar.height * 0.45f),
-                 new Color(1f, 1f, 1f, 0.14f));                 // brillance haute, look plastique
-            DrawCells(bar, low ? 46f : 20f);
-
-            // bout de barre incandescent
+            // REMPLISSAGE : le degrade est peint sur la LARGEUR TOTALE puis coupe a `f`.
+            // Peindre un degrade re-etire sur la portion remplie ferait mentir la couleur --
+            // la barre serait jaune vif a 5 %.
             if (f > 0.001f)
             {
-                Fill(new Rect(bar.xMax - 3f, bar.y, 3f, bar.height), Color.Lerp(fillCol, Color.white, 0.8f));
-                Blit(bar.xMax, bar.center.y, frame.height * 0.85f,
-                     new Color(fillCol.r, fillCol.g, fillCol.b, 0.5f + 0.3f * gainPop));
+                var bar = new Rect(inner.x, inner.y, inner.width * f, inner.height);
+                GUI.color = Color.white;
+                GUI.DrawTextureWithTexCoords(bar, gradTex, new Rect(0f, 0f, f, 1f));
+                // alarme : le remplissage bat en rouge quand il ne reste presque rien
+                if (alarm > 0f)
+                    Fill(bar, new Color(1f, 0.1f, 0.1f, 0.35f * alarm * (0.5f + 0.5f * Mathf.Sin(t * 12f))));
+                // au-dela de la barre pleine : voile dore pulsant, sinon le joueur croirait
+                // que ses points ne comptent plus une fois la barre au maximum.
+                if (over > 0f)
+                    Fill(bar, new Color(1f, 0.95f, 0.6f,
+                                        0.30f * over * (0.6f + 0.4f * Mathf.Sin(t * 5f))));
             }
-
-            // graduations tous les 10 % : segmente = plus lisible qu'une barre lisse
-            for (int i = 1; i < 10; i++)
-            {
-                float gx = frame.x + 3f + (frame.width - 6f) * (i / 10f);
-                Fill(new Rect(gx, frame.y + 3f, 1f, frame.height - 6f), new Color(0f, 0f, 0f, 0.35f));
-            }
-
-            Frame(frame, 3f, accent);                                     // cadre epais, cartoon
-            Frame(new Rect(frame.x - 3f, frame.y - 3f, frame.width + 6f, frame.height + 6f), 1f,
-                  new Color(0.02f, 0.02f, 0.05f, 0.85f));                 // trait sombre exterieur
-            // liseres d'angle facon enseigne
-            Fill(new Rect(frame.x, frame.y - 4f, 34f, 3f), new Color(1f, 0.25f, 0.85f, 0.95f));
-            Fill(new Rect(frame.xMax - 34f, frame.yMax + 1f, 34f, 3f), new Color(1f, 0.25f, 0.85f, 0.95f));
 
             // libelle + valeur
             Label(new Rect(frame.x + 1f, y - 1f, 240f, 20f), low ? "POPULARITE -- CRITIQUE" : "POPULARITE", 13,
@@ -262,50 +260,64 @@ namespace Gameplay
             GUI.color = Color.white;
         }
 
-        // Motif interieur : cellules d'energie qui defilent + un reflet qui balaie.
-        // Tout est clippe A LA MAIN (Intersect) : GUI.BeginGroup ne retient PAS ce qui est
-        // dessine sous une rotation de matrice, les hachures debordaient de la barre.
-        private void DrawCells(Rect bar, float speed)
-        {
-            if (bar.width <= 1f) return;
-            const float cell = 26f, gap = 7f;
-            float o = Mathf.Repeat(t * speed, cell + gap);
-            for (float px = bar.x - cell - gap; px < bar.xMax; px += cell + gap)
-                FillClipped(new Rect(px + o, bar.y, gap, bar.height), bar, new Color(0f, 0f, 0f, 0.16f));
+        // ---- textures cuites (coins arrondis + degrade de la maquette) ----
+        //
+        // OnGUI ne sait dessiner que des quads : les coins arrondis (r=5) et le degrade
+        // sont CUITS une fois dans deux textures plutot que recalcules par frame.
+        //   maskTex : rectangle blanc a coins arrondis -> sert de pochoir teinte (GUI.color)
+        //             pour le cadre noir, le fond, la pastille d'icone et le halo ;
+        //   gradTex : le meme pochoir, mais peint du degrade #DC4529 -> #FFEA00.
+        private Texture2D maskTex, gradTex;
 
-            // reflet large qui balaie la barre
-            float sweep = Mathf.Repeat(t * 0.35f, 1.6f) / 1.6f;
-            float sx = Mathf.Lerp(bar.x - 60f, bar.xMax + 60f, sweep);
-            FillClipped(new Rect(sx, bar.y, 34f, bar.height), bar, new Color(1f, 1f, 1f, 0.16f));
-            FillClipped(new Rect(sx + 14f, bar.y, 6f, bar.height), bar, new Color(1f, 1f, 1f, 0.22f));
+        private void EnsureTextures()
+        {
+            if (maskTex != null && gradTex != null) return;
+            int w = Mathf.Max(8, Mathf.RoundToInt(width));
+            int h = Mathf.Max(8, Mathf.RoundToInt(height));
+            maskTex = MakeRounded(w, h, 5f, null);
+            gradTex = MakeRounded(w, h, 5f, u => Color.Lerp(GradA, GradB, u));
         }
 
-        private static void FillClipped(Rect r, Rect clip, Color c)
+        // Rectangle a coins arrondis. `grad` nul -> blanc pur (pochoir a teinter) ;
+        // sinon la couleur est prise sur l'axe horizontal (0 a gauche, 1 a droite).
+        private static Texture2D MakeRounded(int w, int h, float radius, System.Func<float, Color> grad)
         {
-            float x0 = Mathf.Max(r.x, clip.x), x1 = Mathf.Min(r.xMax, clip.xMax);
-            float y0 = Mathf.Max(r.y, clip.y), y1 = Mathf.Min(r.yMax, clip.yMax);
-            if (x1 <= x0 || y1 <= y0) return;
-            Fill(new Rect(x0, y0, x1 - x0, y1 - y0), c);
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+            float r = Mathf.Min(radius, Mathf.Min(w, h) * 0.5f);
+            var px = new Color[w * h];
+            for (int j = 0; j < h; j++)
+                for (int i = 0; i < w; i++)
+                {
+                    float cx = Mathf.Clamp(i + 0.5f, r, w - r);
+                    float cy = Mathf.Clamp(j + 0.5f, r, h - r);
+                    float d = Vector2.Distance(new Vector2(i + 0.5f, j + 0.5f), new Vector2(cx, cy));
+                    float a = Mathf.Clamp01(r - d + 0.5f);      // 1 px d'antialiasing sur le rayon
+                    float u = w > 1 ? i / (float)(w - 1) : 0f;
+                    Color c = grad != null ? grad(u) : Color.white;
+                    c.a = a;
+                    px[j * w + i] = c;
+                }
+            tex.SetPixels(px);
+            tex.Apply();
+            return tex;
+        }
+
+        // Aplat a coins arrondis (pochoir teinte).
+        private void Round(Rect r, Color c)
+        {
+            GUI.color = c;
+            GUI.DrawTexture(r, maskTex);
         }
 
         private static void Fill(Rect r, Color c)
         {
             GUI.color = c;
             GUI.DrawTexture(r, Texture2D.whiteTexture);
-        }
-
-        private void Blit(float cx, float cy, float rad, Color c)
-        {
-            GUI.color = c;
-            GUI.DrawTexture(new Rect(cx - rad, cy - rad, rad * 2f, rad * 2f), disc);
-        }
-
-        private static void Frame(Rect r, float th, Color c)
-        {
-            Fill(new Rect(r.x, r.y, r.width, th), c);
-            Fill(new Rect(r.x, r.yMax - th, r.width, th), c);
-            Fill(new Rect(r.x, r.y, th, r.height), c);
-            Fill(new Rect(r.xMax - th, r.y, th, r.height), c);
         }
 
         private static void Label(Rect r, string txt, int size, Color c, TextAnchor a)
@@ -322,21 +334,6 @@ namespace Gameplay
             const float c1 = 2.2f, c3 = c1 + 1f;
             float p = x - 1f;
             return 1f + c3 * p * p * p + c1 * p * p;
-        }
-
-        private static Texture2D MakeDisc(int size)
-        {
-            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
-            float rad = size * 0.5f;
-            for (int j = 0; j < size; j++)
-                for (int i = 0; i < size; i++)
-                {
-                    float d = Vector2.Distance(new Vector2(i + 0.5f, j + 0.5f), new Vector2(rad, rad));
-                    tex.SetPixel(i, j, new Color(1f, 1f, 1f, Mathf.Clamp01(1f - d / rad)));
-                }
-            tex.Apply();
-            tex.hideFlags = HideFlags.HideAndDontSave;
-            return tex;
         }
     }
 }

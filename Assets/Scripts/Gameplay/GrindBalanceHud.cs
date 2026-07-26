@@ -2,21 +2,28 @@ using UnityEngine;
 
 namespace Gameplay
 {
-    // HUD d'equilibre du grind : CADRAN ROND cartoon avec aiguille, affiche a cote de la moto.
+    // HUD d'equilibre du grind, d'apres la maquette Figma "In Game equilibre" : ARC ouvert
+    // (anneau de 90 deg, trou central a 65 % du rayon) cerne de noir, degrade vert au centre
+    // -> rouge aux extremites, aiguille noire fine posee sur un point-pivot.
     // Aiguille = ArcadeCarController.GrindBalanceNorm (0 = haut/centre, +/-1 = seuil de chute).
-    // Track colore vert(centre) -> rouge(bords). Juice : pop-in elastique a l'accroche, shake +
-    // flash rouge quand on approche du seuil. Visible seulement en grind. OnGUI -> zero Canvas.
+    // Juice : pop-in elastique a l'accroche, shake + nappe rouge floue ("In Game equilibre
+    // chute") quand on approche du seuil. Visible seulement en grind. OnGUI -> zero Canvas.
     public class GrindBalanceHud : MonoBehaviour
     {
+        // Maquette : cadran 184x184 (rayon 92), trou a 0.65, arc de 90 deg, aiguille de 50.
+        private static readonly Color ArcGreen = new Color(0.023f, 0.938f, 0.084f);   // #06EF15
+        private static readonly Color ArcRed = new Color(0.885f, 0.021f, 0.021f);     // #E20505
+
         [SerializeField] private ArcadeCarController car;
         [SerializeField] private float radius = 92f;
-        [SerializeField] private float needleWidth = 10f;
-        [SerializeField] private float maxAngle = 72f;             // angle aiguille au seuil (deg)
+        [SerializeField] private float innerRatio = 0.65f;         // trou central, cf maquette
+        [SerializeField] private float needleWidth = 2f;
+        [SerializeField] private float maxAngle = 45f;             // angle aiguille au seuil (deg)
         [SerializeField] private Vector2 screenOffset = new Vector2(230f, -20f); // / centre moto a l'ecran
         [SerializeField] private float dial = -1f;                // sens de l'aiguille (-1/+1)
 
         private Camera cam;
-        private Texture2D disc;
+        private Texture2D disc, glow;
         private bool wasRail;
         private float pop;        // 0..1 anim d'apparition
         private float danger;     // 0..1 proximite du seuil
@@ -26,7 +33,8 @@ namespace Gameplay
         {
             if (car == null) car = GetComponent<ArcadeCarController>();
             if (car == null) car = FindAnyObjectByType<ArcadeCarController>();
-            disc = MakeDisc(128);
+            disc = MakeDisc(128, false);
+            glow = MakeDisc(128, true);
         }
 
         private void Update()
@@ -63,44 +71,43 @@ namespace Gameplay
             Matrix4x4 m0 = GUI.matrix;
             GUIUtility.ScaleAroundPivot(new Vector2(s, s), new Vector2(gx, gy));
 
-            // halo (rouge quand danger, sinon doux)
-            Color halo = Color.Lerp(new Color(0.5f, 0.7f, 1f, 0.18f), new Color(1f, 0.2f, 0.15f, 0.5f), danger);
-            Blit(gx, gy, radius * 1.32f, halo);
+            // Nappe rouge floue de l'etat "chute" : dans la maquette c'est un arc rouge
+            // flouté (15 px) POSE DERRIERE le cadran. Un disque degrade fait le meme office
+            // ici et coute un seul quad.
+            Glow(gx, gy - radius * 0.35f, radius * 1.5f, new Color(0.885f, 0.021f, 0.021f, 0.75f * danger));
 
-            // corps : anneau clair puis disque sombre -> bord net cartoon
-            Blit(gx, gy, radius * 1.06f, new Color(0.98f, 0.98f, 1f, 0.95f));       // contour blanc
-            Blit(gx, gy, radius, new Color(0.16f, 0.17f, 0.28f, 0.98f));            // fond
-            Blit(gx, gy, radius * 0.9f, new Color(0.10f, 0.11f, 0.19f, 1f));        // creux
-
-            // TRACK colore vert(centre) -> rouge(bords)
-            int seg = 26;
+            float inner = radius * innerRatio;
+            // L'ARC est peint en tranches : OnGUI ne trace que des quads. Une tranche noire
+            // legerement plus large et plus longue passe d'abord -> c'est elle qui fait le
+            // cerne 3 px de la maquette (stroke centre : 1.5 de chaque cote).
+            const int seg = 40;
+            float step = 2f * maxAngle / (seg - 1);
+            float chord = 2f * radius * Mathf.Sin(step * 0.5f * Mathf.Deg2Rad) + 1.5f;
             for (int i = 0; i < seg; i++)
             {
                 float u = i / (seg - 1f);
                 float ang = Mathf.Lerp(-maxAngle, maxAngle, u);
-                float edge = Mathf.Abs(u * 2f - 1f);
-                Color c = edge < 0.66f
-                    ? Color.Lerp(new Color(0.3f, 1f, 0.45f), new Color(1f, 0.85f, 0.2f), edge / 0.66f)
-                    : Color.Lerp(new Color(1f, 0.85f, 0.2f), new Color(1f, 0.2f, 0.15f), (edge - 0.66f) / 0.34f);
-                RotRect(gx, gy, ang, radius * 0.62f, radius * 0.9f, radius * 0.14f, c); // pastille sur le rim
+                RotRect(gx, gy, ang, inner - 1.5f, radius + 1.5f, chord + 3f, Color.black);
             }
+            for (int i = 0; i < seg; i++)
+            {
+                float u = i / (seg - 1f);
+                float ang = Mathf.Lerp(-maxAngle, maxAngle, u);
+                // vert au centre, rouge aux deux bouts (degrade angulaire de la maquette)
+                float edge = Mathf.Abs(u * 2f - 1f);
+                RotRect(gx, gy, ang, inner, radius, chord, Color.Lerp(ArcGreen, ArcRed, Mathf.Pow(edge, 0.8f)));
+            }
+            // Bouchons noirs aux deux extremites : les tranches laissent le degrade a nu sur
+            // les tranches de bout, le cerne doit faire le tour complet.
+            RotRect(gx, gy, -maxAngle - step * 0.5f, inner - 1.5f, radius + 1.5f, 3f, Color.black);
+            RotRect(gx, gy, maxAngle + step * 0.5f, inner - 1.5f, radius + 1.5f, 3f, Color.black);
 
-            // reperes de chute (gros traits rouges) + repere centre
-            RotRect(gx, gy, maxAngle, radius * 0.5f, radius, 7f, new Color(1f, 0.15f, 0.1f, 1f));
-            RotRect(gx, gy, -maxAngle, radius * 0.5f, radius, 7f, new Color(1f, 0.15f, 0.1f, 1f));
-            RotRect(gx, gy, 0f, radius * 0.5f, radius, 4f, new Color(0.5f, 1f, 0.6f, 0.9f));
-
-            // AIGUILLE : ombre portee + corps colore + bout rond
+            // AIGUILLE : trait noir fin (2 px) avec son ombre portee, plante dans un point-pivot.
             float ang2 = norm * maxAngle;
-            float len = radius * 0.8f;
-            RotRect(gx + 3f, gy + 4f, ang2, 0f, len, needleWidth, new Color(0f, 0f, 0f, 0.35f)); // ombre
-            Color needleCol = Color.Lerp(new Color(0.35f, 1f, 0.5f), new Color(1f, 0.25f, 0.15f), Mathf.Abs(norm));
-            RotRect(gx, gy, ang2, 0f, len, needleWidth, needleCol);
-            NeedleTip(gx, gy, ang2, len, needleWidth * 1.5f, needleCol);
-
-            // moyeu
-            Blit(gx, gy, 15f, new Color(1f, 1f, 1f, 1f));
-            Blit(gx, gy, 10f, new Color(0.16f, 0.17f, 0.28f, 1f));
+            float len = radius * 0.54f;                 // 50 px pour un rayon de 92, cf maquette
+            RotRect(gx, gy + 3f, ang2, 0f, len, needleWidth, new Color(0f, 0f, 0f, 0.25f));
+            RotRect(gx, gy, ang2, 0f, len, needleWidth, Color.black);
+            Blit(gx, gy, 3f, Color.black);              // point aiguille (diametre 6)
 
             GUI.matrix = m0;
             GUI.color = Color.white;
@@ -116,19 +123,17 @@ namespace Gameplay
             GUI.matrix = m;
         }
 
-        private void NeedleTip(float cx, float cy, float angleDeg, float len, float d, Color c)
-        {
-            Matrix4x4 m = GUI.matrix;
-            GUIUtility.RotateAroundPivot(angleDeg, new Vector2(cx, cy));
-            GUI.color = c;
-            GUI.DrawTexture(new Rect(cx - d * 0.5f, cy - len - d * 0.5f, d, d), disc);
-            GUI.matrix = m;
-        }
-
         private void Blit(float cx, float cy, float r, Color c)
         {
             GUI.color = c;
             GUI.DrawTexture(new Rect(cx - r, cy - r, r * 2f, r * 2f), disc);
+        }
+
+        // Tache douce : c'est ce qui remplace le flou de 15 px de la maquette (etat "chute").
+        private void Glow(float cx, float cy, float r, Color c)
+        {
+            GUI.color = c;
+            GUI.DrawTexture(new Rect(cx - r, cy - r, r * 2f, r * 2f), glow);
         }
 
         private static float EaseOutBack(float x)
@@ -138,7 +143,8 @@ namespace Gameplay
             return 1f + c3 * p * p * p + c1 * p * p;
         }
 
-        private static Texture2D MakeDisc(int size)
+        // `soft` : degrade radial (tache floue) au lieu du disque a bord net.
+        private static Texture2D MakeDisc(int size, bool soft)
         {
             var t = new Texture2D(size, size, TextureFormat.RGBA32, false);
             float r = size * 0.5f;
@@ -146,7 +152,9 @@ namespace Gameplay
                 for (int x = 0; x < size; x++)
                 {
                     float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(r, r));
-                    t.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(r - d)));
+                    float a = soft ? Mathf.Clamp01(1f - d / r) : Mathf.Clamp01(r - d);
+                    if (soft) a *= a;                       // retombee douce, pas de bord visible
+                    t.SetPixel(x, y, new Color(1f, 1f, 1f, a));
                 }
             t.Apply();
             t.hideFlags = HideFlags.HideAndDontSave;

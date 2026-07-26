@@ -147,7 +147,7 @@ GameObject:
   - component: {fileID: 4160419771566518506}
   - component: {fileID: 8458178626478147641}
   - component: {fileID: 839807930798353910}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Traffic_Ambulance
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -236,14 +236,10 @@ MonoBehaviour:
   accel: 6
   brake: 14
   turnRate: 90
-  feelerLength: 7
   stopDistance: 2.2
-  sideAngle: 28
-  rayHeight: 0.5
-  obstacleMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  laneFrac: 0.22
+  laneFrac: 0.5
+  lookAhead: 5
+  rideHeight: 0.12
   arriveDist: 2.2
   straightBias: 0.7
   turnSlow: 0.45

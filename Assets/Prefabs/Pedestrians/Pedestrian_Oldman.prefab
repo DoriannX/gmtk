@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 4356895272851341072}
   - component: {fileID: 1479930792842452497}
   - component: {fileID: 368412636338957211}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Oldman
   m_TagString: Untagged
   m_Icon: {fileID: 0}

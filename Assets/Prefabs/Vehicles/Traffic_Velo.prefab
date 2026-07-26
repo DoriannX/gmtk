@@ -110,7 +110,7 @@ GameObject:
   - component: {fileID: 4332204899491355749}
   - component: {fileID: 4576960544323273916}
   - component: {fileID: 5165221532032737721}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Traffic_Velo
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -198,14 +198,10 @@ MonoBehaviour:
   accel: 6
   brake: 14
   turnRate: 90
-  feelerLength: 7
   stopDistance: 2.2
-  sideAngle: 28
-  rayHeight: 0.5
-  obstacleMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  laneFrac: 0.22
+  laneFrac: 0.5
+  lookAhead: 5
+  rideHeight: 0.12
   arriveDist: 2.2
   straightBias: 0.7
   turnSlow: 0.45

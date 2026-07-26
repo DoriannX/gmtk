@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 7985020061376275293}
   - component: {fileID: 6674919217759554640}
   - component: {fileID: 2533929011665597873}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Capguy
   m_TagString: Untagged
   m_Icon: {fileID: 0}

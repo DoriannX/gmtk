@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 4262225538293841797}
   - component: {fileID: 1440384889607202738}
   - component: {fileID: 8967243596365259414}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Sunhat
   m_TagString: Untagged
   m_Icon: {fileID: 0}

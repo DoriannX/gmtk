@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 2851946321290110000}
   - component: {fileID: 8334270890514529217}
   - component: {fileID: 6115091290434952878}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Hipster
   m_TagString: Untagged
   m_Icon: {fileID: 0}

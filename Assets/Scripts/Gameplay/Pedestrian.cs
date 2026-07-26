@@ -67,9 +67,11 @@ namespace Gameplay
         // entre pietons). On coupe sa rotation : le cap cartoon est gere a la main
         // (Facing + waddle). On le DESACTIVE pendant knockback/conduite (tweens/teleport).
         private NavMeshAgent agent;
-        private CityGridAuthoring cityGrid;   // pour savoir si on est sur la chaussee
-        private float laneHalf;               // demi-largeur de la voie voitures (bande centrale)
+        private RoadNetwork roads;            // pour savoir si on est sur la chaussee
+        private float laneHalf;               // demi-largeur de la chaussee (hors trottoirs)
         private float awareTimer;             // cadence des scans d'environnement
+        private float navRetry;               // cadence des tentatives de raccrochage au NavMesh
+        private int navRetries = 12;          // ~6 s d'essais, puis on laisse tomber
         private float cautionLeft;            // gel volontaire (bord de trottoir / esquive)
         private bool wasOnRoad;               // detection front sidewalk->chaussee (regard avant traversee)
 
@@ -111,7 +113,13 @@ namespace Gameplay
 
         private void Awake()
         {
-            baseTilt = transform.rotation; // pose debout d'import (tilt seul, sans cap)
+            // Pose debout d'import, CAP RETIRE. On enleve le yaw monde de la rotation
+            // capturee : `Facing` multiplie chaque cap voulu par baseTilt, donc un pieton
+            // pose avec une orientation quelconque (le semeur en donnait une au hasard, et
+            // la main dans la scene en donne aussi) injecterait ce cap dans TOUS ses caps
+            // suivants -- le personnage marche alors de travers en permanence.
+            Quaternion imported = transform.rotation;
+            baseTilt = Quaternion.Inverse(Quaternion.Euler(0f, imported.eulerAngles.y, 0f)) * imported;
 
             // insere un pivot entre le wrapper et le FBX
             pivot = new GameObject("Pivot").transform;
@@ -158,29 +166,54 @@ namespace Gameplay
 
         private void Start()
         {
-            cityGrid = CityGridAuthoring.Active;
-            // Bande centrale = voie voitures (~0.24 cellule de part et d'autre du centre,
-            // le reste des bords etant trottoir). Cf. sidewalkWidth du CityBuilder.
-            laneHalf = cityGrid != null ? cityGrid.CellSize * 0.24f : 2.6f;
+            roads = FindFirstObjectByType<RoadNetwork>();
+            // La chaussee est la bande centrale du trace, bordures et trottoirs exclus :
+            // c'est exactement RoadwayHalfWidth, mesuree sur la tuile du kit.
+            laneHalf = roads != null ? roads.RoadwayHalfWidth : 2.35f;
             SnapToNavMesh();
+            // Cap de depart tire au sort, APRES la capture de baseTilt : c'est la seule
+            // facon de varier l'orientation de la foule sans la fausser (cf. Awake).
+            transform.rotation = Facing(Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward);
             EnterIdle();
         }
 
-        // Pose le pieton sur le NavMesh le plus proche (il a pu spawner au coin d'une
-        // cellule, hors trottoir). Recale spawnPos sur le point reel -> l'errance
+        // Pose le pieton sur le NavMesh le plus proche (il a pu spawner au bord d'un
+        // trottoir, ou hors emprise). Recale spawnPos sur le point reel -> l'errance
         // reste ancree sur le reseau marchable.
+        //
+        // On coupe/rallume l'agent au lieu d'un simple Warp : le NavMesh n'existe qu'au
+        // premier LateUpdate (RuntimeNavBaker, la route est reconstruite au premier Update),
+        // donc l'agent s'est cree AVANT lui et Unity l'a refuse ("Failed to create agent
+        // because it is not close enough to the NavMesh"). Seul un cycle enabled le recree.
         private void SnapToNavMesh()
         {
             if (agent == null) return;
             if (NavMesh.SamplePosition(transform.position, out var hit, 6f, NavMesh.AllAreas))
             {
-                agent.Warp(hit.position);
+                agent.enabled = false;
+                transform.position = hit.position;
+                agent.enabled = true;
                 spawnPos = hit.position;
             }
             else
             {
                 agent.enabled = false; // pas de NavMesh dessous : reste inerte plutot que d'erreur
             }
+        }
+
+        // Le NavMesh arrive apres le Start des pietons : celui qui n'a rien trouve reessaie
+        // quelques secondes, sinon il resterait plante la toute la partie. Au-dela on
+        // abandonne (il a spawne hors emprise) plutot que de sonder a vie.
+        private void RetryNavMesh(float dt)
+        {
+            if (navRetries <= 0 || agent == null) return;
+            if (agent.enabled && agent.isOnNavMesh) { navRetries = 0; return; }
+            navRetry -= dt;
+            if (navRetry > 0f) return;
+            navRetry = 0.5f;
+            navRetries--;
+            agent.enabled = true;      // rallume avant de sonder : Snap le recoupera si besoin
+            SnapToNavMesh();
         }
 
         private void OnEnable() => Creatures.Killed += OnCreatureKilled;
@@ -192,6 +225,7 @@ namespace Gameplay
             if (mode == Mode.Driving) return; // au volant : cache, c'est la voiture qui roule
 
             float dt = Time.deltaTime;
+            RetryNavMesh(dt);          // le NavMesh n'est bake qu'au premier LateUpdate
             FaceVelocity(dt);          // oriente le corps vers le deplacement reel de l'agent
             UpdateAwareness(dt);       // regard au bord + esquive des voitures (peut geler l'agent)
 
@@ -263,7 +297,7 @@ namespace Gameplay
         // faire ecraser -> le roadkill reste). Scans espaces (0.2s) pour le cout.
         private void UpdateAwareness(float dt)
         {
-            if (agent == null || !agent.isOnNavMesh || cityGrid == null) return;
+            if (agent == null || !agent.isOnNavMesh || roads == null) return;
             if (mode != Mode.Wander && mode != Mode.WalkTo && mode != Mode.Flee) return;
             if (!walking && mode == Mode.Wander) { wasOnRoad = false; return; }
 
@@ -271,7 +305,7 @@ namespace Gameplay
             if (awareTimer > 0f) return;
             awareTimer = 0.2f;
 
-            bool onRoad = cityGrid.IsOnRoadway(transform.position, laneHalf);
+            bool onRoad = OnRoadway(transform.position);
 
             // Bord du trottoir : il s'apprete a s'engager -> petite pause + coup d'oeil.
             if (onRoad && !wasOnRoad)
@@ -282,6 +316,16 @@ namespace Gameplay
             if (onRoad && CarBearingDown())
                 Flinch();
         }
+
+        // Le point est-il sur la CHAUSSEE (donc expose) ? ProbeRoad projette sur l'axe du trace
+        // le plus proche ; a moins d'une demi-chaussee de cet axe, on est dans la voie.
+        //
+        // ponytail: on ne teste que les SEGMENTS. Un carrefour renvoie une distance a son
+        // CENTRE, pas a un axe, et le seuil n'y veut rien dire -- au pire un pieton traverse un
+        // croisement sans marquer sa pause, la ou la traversee de rue, elle, est couverte.
+        private bool OnRoadway(Vector3 world)
+            => roads.ProbeRoad(world, 40f, out var probe)
+               && probe.valid && probe.segment >= 0 && probe.distance < laneHalf;
 
         private void LookBeforeCrossing()
         {

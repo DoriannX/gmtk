@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 3556735252416293049}
   - component: {fileID: 8885953019646609465}
   - component: {fileID: 6605465927165172655}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Woman
   m_TagString: Untagged
   m_Icon: {fileID: 0}

@@ -139,7 +139,7 @@ GameObject:
   - component: {fileID: 1811539205886077834}
   - component: {fileID: 2405849270365529359}
   - component: {fileID: 2407896591189047981}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Traffic_Bus
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -156,7 +156,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.45, y: 0.45, z: 0.45}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 7874145499301801355}
@@ -227,14 +227,10 @@ MonoBehaviour:
   accel: 6
   brake: 14
   turnRate: 90
-  feelerLength: 7
   stopDistance: 2.2
-  sideAngle: 28
-  rayHeight: 0.5
-  obstacleMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  laneFrac: 0.22
+  laneFrac: 0.5
+  lookAhead: 5
+  rideHeight: 0.12
   arriveDist: 2.2
   straightBias: 0.7
   turnSlow: 0.45

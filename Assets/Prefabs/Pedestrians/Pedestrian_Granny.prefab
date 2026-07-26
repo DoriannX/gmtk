@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 4759858257624774592}
   - component: {fileID: 1807196011516171282}
   - component: {fileID: 2350113139995391383}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Pedestrian_Granny
   m_TagString: Untagged
   m_Icon: {fileID: 0}

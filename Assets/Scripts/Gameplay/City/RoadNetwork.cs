@@ -610,6 +610,63 @@ namespace Gameplay.City
             get { EnsureTile(); return tile.valid && tile.width > 0.01f ? tile.width * 0.5f : 6.5f; }
         }
 
+        // Demi-largeur de la CHAUSSEE seule (bordures et trottoirs exclus) : c'est la bande ou
+        // roulent les voitures et ou un pieton est expose. Mesuree comme SidewalkHeight, sur les
+        // memes triangles a plat : ceux qui restent AU NIVEAU de la chaussee (y < 0.02, le seuil
+        // qui ecarte deja la bordure), et on prend leur demi-extension en X. Sur SM_Tile_droit :
+        // 4.7 m de chaussee dans 13 m d'emprise -> 2.35.
+        //
+        // Repli sur 40 % de l'emprise si le FBX n'est pas lisible : une voie plausible plutot
+        // qu'un zero qui ferait rouler tout le monde pile sur l'axe.
+        [System.NonSerialized] private float roadwayHalf = float.NaN;
+        public float RoadwayHalfWidth
+        {
+            get
+            {
+                if (!float.IsNaN(roadwayHalf)) return roadwayHalf;
+                EnsureTile();
+                roadwayHalf = RoadHalfWidth * 0.4f;
+                if (!tile.valid) return roadwayHalf;
+
+                var v = tile.verts;
+                var tr = tile.tris;
+                float half = 0f;
+                for (int i = 0; i + 2 < tr.Length; i += 3)
+                {
+                    Vector3 a = v[tr[i]], b = v[tr[i + 1]], c = v[tr[i + 2]];
+                    Vector3 cr = Vector3.Cross(b - a, c - a);
+                    float len = cr.magnitude;
+                    if (len < 1e-9f || cr.y / len < 0.999f) continue;   // ecarte les chanfreins
+                    if ((a.y + b.y + c.y) / 3f >= 0.02f) continue;      // bordure ou trottoir
+                    half = Mathf.Max(half, Mathf.Abs(a.x));
+                    half = Mathf.Max(half, Mathf.Abs(b.x));
+                    half = Mathf.Max(half, Mathf.Abs(c.x));
+                }
+                if (half > 0.01f) roadwayHalf = half;
+                return roadwayHalf;
+            }
+        }
+
+        // Voisins d'un noeud, en indices de NOEUDS. C'est le graphe que suit la circulation :
+        // arrive au bout d'un segment, une voiture choisit sa suite ici.
+        public IReadOnlyList<int> NodeNeighbours(int i)
+        {
+            EnsureAdjacency();
+            return i >= 0 && i < nodes.Count ? (IReadOnlyList<int>)adj[i] : System.Array.Empty<int>();
+        }
+
+        // Segment reliant deux noeuds, -1 s'il n'y en a pas.
+        // ponytail: balayage lineaire ; a indexer si un reseau depasse quelques centaines de segments.
+        public int SegmentBetween(int a, int b)
+        {
+            for (int k = 0; k < segments.Count; k++)
+            {
+                var s = segments[k];
+                if ((s.a == a && s.b == b) || (s.a == b && s.b == a)) return k;
+            }
+            return -1;
+        }
+
         public SegmentKind SegmentKindOf(int k)
             => k >= 0 && k < segments.Count ? segments[k].kind : SegmentKind.Route;
 
@@ -1026,6 +1083,7 @@ namespace Gameplay.City
         {
             tileReady = false;
             sidewalkY = float.NaN;   // mesure derivee de la tuile -> meme invalidation
+            roadwayHalf = float.NaN;
             boundsCache = null;
             roadwayCache = null;
             runtimeMat = null;   // DontSave -> libere au prochain reload, pas de DestroyImmediate ici

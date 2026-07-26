@@ -24,16 +24,15 @@ namespace Gameplay
         [SerializeField] private float turnRate = 90f;        // deg/s de rotation vers le cap voulu
 
         [Header("Detection obstacles")]
-        [SerializeField] private float feelerLength = 7f;     // portee des antennes avant
         [SerializeField] private float stopDistance = 2.2f;   // en dessous : arret complet
-        [SerializeField] private float sideAngle = 28f;       // ecart des antennes laterales
-        [SerializeField] private float rayHeight = 0.5f;      // hauteur des rayons (pare-choc)
-        [SerializeField] private LayerMask obstacleMask = ~0; // tout par defaut
 
         [Header("Circulation (reseau routier)")]
-        [Tooltip("Decalage voie de droite depuis l'axe de la rue (x cellSize). Voie INTERIEURE, degagee des voitures garees au trottoir.")]
-        [SerializeField] private float laneFrac = 0.12f;
-        [SerializeField] private float arriveDist = 2.2f;      // distance pour valider le waypoint courant
+        [Tooltip("Decalage voie de droite depuis l'axe de la rue, en fraction de la DEMI-CHAUSSEE " +
+                 "(RoadNetwork.RoadwayHalfWidth). 0.5 = milieu de la voie de droite.")]
+        [SerializeField] private float laneFrac = 0.5f;
+        [SerializeField] private float lookAhead = 5f;         // distance du point de voie vise devant
+        [SerializeField] private float rideHeight = 0.12f;     // hauteur de la caisse au-dessus de l'axe
+        [SerializeField] private float arriveDist = 2.2f;      // marge d'approche d'un carrefour
         [SerializeField, Range(0f, 1f)] private float straightBias = 0.7f; // proba de continuer tout droit au carrefour
         [SerializeField] private float turnSlow = 0.45f;       // facteur de vitesse en approche de virage
         [SerializeField] private float carFollowGap = 4.5f;    // distance mini derriere la voiture devant
@@ -80,24 +79,30 @@ namespace Gameplay
         private bool blocked;           // arrete par un obstacle ce frame
 
         // ---- Circulation sur le reseau routier ----
-        // La voiture suit la grille : cellule courante + direction (une des 4),
-        // vise le point "voie de droite" de la cellule suivante, choisit un virage
-        // aux carrefours. Les feux et la priorite se greffent par-dessus (Stage 2).
-        private City.CityGridAuthoring cityAuth;
-        private Vector2Int cell, gridDir;   // cellule + direction en coords grille
+        // La voiture suit les SPLINES du RoadNetwork : segment courant, sens de parcours et
+        // abscisse curviligne. Elle vise un point de voie quelques metres devant, et choisit
+        // sa suite dans le graphe a chaque noeud. Les feux et la priorite se greffent
+        // par-dessus. L'abscisse avance a l'estime (distance parcourue) : la voiture roule sur
+        // son cap, pas sur la spline, et c'est le point de voie qui la ramene dans l'axe.
+        private City.RoadNetwork net;
+        private int seg = -1;               // segment courant
+        private int segDir = 1;             // +1 = du noeud a vers le noeud b
+        private float segPos;               // abscisse curviligne sur le segment (m)
         private Vector3 waypoint;           // cible monde courante (voie de droite)
-        private bool onRoad;                // a accroche la grille au demarrage
-        private Vector2Int reservedInter = NoCell; // intersection reservee (priorite)
-        private static readonly Vector2Int NoCell = new Vector2Int(-9999, -9999);
-        private static readonly Vector2Int[] GridDirs =
-            { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
-        // Qui occupe quelle intersection (une seule voiture a la fois -> priorite/stop).
-        private static readonly Dictionary<Vector2Int, AICarController> InterOwner = new();
+        private bool onRoad;                // a accroche le reseau au demarrage
+        private float roadY, roadPitch;     // altitude et pente de la voie sous la voiture
+        private float curRoadPitch;         // pente lissee, appliquee a la caisse
+        private int reservedNode = -1;      // carrefour reserve (priorite)
+        // Qui occupe quel carrefour (une seule voiture a la fois -> priorite/stop).
+        private static readonly Dictionary<int, AICarController> InterOwner = new();
+        private static readonly List<int> ScratchTurns = new();
+        private static City.RoadNetwork[] nets;
+        private Transform playerT;          // camion du joueur : obstacle a part entiere
 
         // Reset des statics a chaque entree en play (Reload Domain peut etre off ->
         // sinon Cars/InterOwner gardent des entrees fantomes de la session precedente).
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        private static void ResetStatics() { Cars.Clear(); InterOwner.Clear(); }
+        private static void ResetStatics() { Cars.Clear(); InterOwner.Clear(); nets = null; }
 
         // juice : pivot cosmetique (ne touche jamais la racine physique/raycast)
         private Transform visual;
@@ -147,7 +152,9 @@ namespace Gameplay
             var mainCam = Camera.main != null ? Camera.main : FindAnyObjectByType<Camera>();
             if (mainCam) camShake = mainCam.GetComponent<CarFollowCamera>();
 
-            cityAuth = City.CityGridAuthoring.Active;
+            net = FirstNetwork();
+            var playerGo = GameObject.FindGameObjectWithTag("Player");
+            if (playerGo != null) playerT = playerGo.transform;
             if (autoDrive) InitRoad(); // ambient/debug : demarre la circulation seule
         }
 
@@ -219,10 +226,10 @@ namespace Gameplay
             bool driving = (Occupied || autoDrive) && crashSpinLeft <= 0f && recoilLeft <= 0f;
             if (driving)
             {
-                if (!onRoad) InitRoad();            // (re)accroche la grille au besoin
+                if (!onRoad) InitRoad();            // (re)accroche le reseau au besoin
                 desired = onRoad ? DriveRoad(dt) : 0f;
             }
-            else { desired = 0f; blocked = false; } // garee / en plein choc : ne roule pas
+            else { desired = 0f; blocked = false; roadPitch = 0f; } // garee / en plein choc : ne roule pas
             if (stunLeft > 0f) { stunLeft -= dt; desired = 0f; } // etourdi apres un choc
 
             // accel ou freinage vers la vitesse voulue
@@ -238,21 +245,34 @@ namespace Gameplay
             else
             {
                 float yaw = Mathf.MoveTowardsAngle(transform.eulerAngles.y, targetHeading, turnRate * dt);
-                transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+                // La caisse se couche dans la pente de la voie : le cap suit alors la rampe et
+                // l'avance se fait DANS la pente au lieu de traverser le bitume.
+                curRoadPitch = Mathf.LerpAngle(curRoadPitch, roadPitch, 1f - Mathf.Exp(-6f * dt));
+                transform.rotation = Quaternion.Euler(curRoadPitch, yaw, 0f);
             }
 
-            // avance a plat sur le cap courant
+            // avance sur le cap courant
             transform.position += transform.forward * (speed * dt);
 
             // recul du choc (recoilDir porte deja la vitesse)
             if (recoilLeft > 0f) { recoilLeft -= dt; transform.position += recoilDir * dt; }
+
+            // Recale l'altitude sur la voie : l'avance sur le cap ne suit pas exactement la
+            // spline (virages, changements de pente), et la derive s'accumulerait.
+            if (driving && onRoad)
+            {
+                Vector3 p = transform.position;
+                p.y = Mathf.Lerp(p.y, roadY + rideHeight, 1f - Mathf.Exp(-8f * dt));
+                transform.position = p;
+            }
 
             SpinWheels(dt);
             SteerFrontWheels(dt);
             UpdateJuice(dt);
         }
 
-        // Detecte le contact avec une autre voiture (AABB des BoxCollider) et declenche la reaction.
+        // Detecte le contact avec une autre voiture et declenche la reaction. Deux passes :
+        // l'AABB pour degrossir, puis le contact reel entre boites ORIENTEES.
         private void CheckBump()
         {
             if (box == null || bumpCooldown > 0f) return;
@@ -260,9 +280,19 @@ namespace Gameplay
             foreach (var c in Cars)
             {
                 if (c == this || c.box == null || c.bumpCooldown > 0f) continue;
-                if (b.Intersects(c.box.bounds)) { Bump(c); return; }
+                if (!b.Intersects(c.box.bounds)) continue;
+                if (!Touching(box, c.box)) continue;
+                Bump(c); return;
             }
         }
+
+        // Contact reel entre deux boites orientees. bounds.Intersects ne compare que des AABB :
+        // un vehicule long en diagonale gonfle la sienne de plusieurs metres, et le trafic se
+        // declenchait des chocs a vide en se croisant sur des voies opposees.
+        private static bool Touching(BoxCollider a, BoxCollider b) =>
+            Physics.ComputePenetration(a, a.transform.position, a.transform.rotation,
+                                       b, b.transform.position, b.transform.rotation,
+                                       out _, out _);
 
         // Choc IA-IA : les DEUX voitures encaissent + un seul burst de FX partage au milieu.
         private void Bump(AICarController other)
@@ -461,59 +491,101 @@ namespace Gameplay
 
         // ================= Circulation sur le reseau routier =================
 
-        // Accroche la voiture a la grille : cellule route la plus proche + direction
-        // initiale alignee sur le cap actuel. Appele a l'entree d'un conducteur / autoDrive.
+        // Accroche la voiture au reseau : segment le plus proche + sens aligne sur le cap
+        // actuel. Appele a l'entree d'un conducteur / autoDrive, et en rattrapage apres un
+        // knockback. ProbeRoad fait la projection : `t` est le parametre normalise sur la
+        // spline, dont on tire l'abscisse curviligne.
         private void InitRoad()
         {
-            cityAuth = cityAuth != null ? cityAuth : City.CityGridAuthoring.Active;
-            if (cityAuth == null || cityAuth.Grid == null) { onRoad = false; return; }
-            var grid = cityAuth.Grid;
-            Vector3 local = cityAuth.transform.InverseTransformPoint(transform.position);
-            grid.WorldToCell(local, out int x, out int y);
-            Vector2Int c = new Vector2Int(x, y);
-            if (grid.At(c.x, c.y) != City.CellType.Road && !NearestRoad(c, out c)) { onRoad = false; return; }
-            cell = c;
-            gridDir = SnapDir(c);
-            waypoint = WaypointFor(cell, gridDir);
+            onRoad = false;
+            net = net != null ? net : FirstNetwork();
+            if (net == null || net.SegmentCount == 0) return;
+            if (!net.ProbeRoad(transform.position, 60f, out var probe) || !probe.valid) return;
+
+            if (probe.segment >= 0)
+            {
+                seg = probe.segment;
+                segPos = probe.t * net.SegmentLength(seg);
+            }
+            else
+            {
+                // Pile sur un carrefour : on repart par une de ses branches, au hasard.
+                var nb = net.NodeNeighbours(probe.node);
+                if (nb.Count == 0) return;
+                seg = net.SegmentBetween(probe.node, nb[Random.Range(0, nb.Count)]);
+                if (seg < 0) return;
+                segPos = net.SegmentAt(seg).a == probe.node ? 0f : net.SegmentLength(seg);
+            }
+
+            // Sens de parcours : celui qui colle le mieux au cap actuel.
+            segDir = Vector3.Dot(transform.forward, TravelDirAt(seg, segPos, 1)) < 0f ? -1 : 1;
+            waypoint = LanePoint(seg, segPos + lookAhead * segDir, segDir);
+            roadY = transform.position.y;
             onRoad = true;
         }
 
-        // Suit la route : oriente vers le waypoint (voie de droite), avance de cellule
-        // en cellule, choisit un virage aux carrefours. Renvoie la vitesse voulue
+        // Suit la route : vise le point de voie `lookAhead` metres devant, avance l'abscisse
+        // de la distance parcourue, choisit sa suite a chaque noeud. Renvoie la vitesse voulue
         // (croisiere, ralentie en virage, coupee derriere une voiture ou pour ceder).
         private float DriveRoad(float dt)
         {
-            var grid = cityAuth.Grid;
-            // re-accroche si projetee loin (knockback) : la cellule courante a trop devie
-            Vector3 local = cityAuth.transform.InverseTransformPoint(transform.position);
-            grid.WorldToCell(local, out int cx, out int cy);
-            if (Mathf.Abs(cx - cell.x) > 1 || Mathf.Abs(cy - cell.y) > 1)
+            // Re-accroche si projetee loin de sa voie (knockback, explosion voisine).
+            Vector3 off = transform.position - LanePoint(seg, segPos, segDir); off.y = 0f;
+            if (off.sqrMagnitude > 64f)
             {
                 InitRoad();
                 if (!onRoad) return 0f;
             }
 
-            Vector3 toWp = waypoint - transform.position; toWp.y = 0f;
-            float dist = toWp.magnitude;
-            if (dist < arriveDist)
+            segPos += speed * dt * segDir;
+
+            // Franchissement de noeud : on reporte le depassement sur le segment suivant. La
+            // boucle (et son garde-fou) couvre le cas d'un segment plus court qu'un pas.
+            float len = net.SegmentLength(seg);
+            for (int guard = 0; (segPos > len || segPos < 0f) && guard < 4; guard++)
             {
-                Vector2Int next = cell + gridDir;
-                if (IsRoad(next)) cell = next;
-                gridDir = ChooseDir(cell, gridDir);
-                if (reservedInter != NoCell && cell != reservedInter) ReleaseInter(); // sortie d'intersection
-                waypoint = WaypointFor(cell, gridDir);
-                toWp = waypoint - transform.position; toWp.y = 0f; dist = toWp.magnitude;
+                int node = segDir > 0 ? net.SegmentAt(seg).b : net.SegmentAt(seg).a;
+                float over = segPos > len ? segPos - len : -segPos;
+                if (!StepThroughNode(node)) { onRoad = false; return 0f; }
+                len = net.SegmentLength(seg);
+                segPos = segDir > 0 ? over : len - over;
             }
 
+            waypoint = LanePoint(seg, segPos + lookAhead * segDir, segDir);
+            Vector3 toWp = waypoint - transform.position; toWp.y = 0f;
             if (toWp.sqrMagnitude > 0.01f)
                 targetHeading = Quaternion.LookRotation(toWp).eulerAngles.y;
 
+            // Assiette : altitude de la voie sous la voiture et pente locale. Le reseau monte
+            // a +18 et descend a -15 dans cette ville -- sans ca les voitures decollent des
+            // rampes et s'enfoncent dans les descentes.
+            Vector3 here = LanePoint(seg, segPos, segDir);
+            roadY = here.y;
+            Vector3 back = LanePoint(seg, segPos - 2f * segDir, segDir);
+            Vector3 front = LanePoint(seg, segPos + 2f * segDir, segDir);
+            roadPitch = -Mathf.Atan2(front.y - back.y, 4f) * Mathf.Rad2Deg;
+
             float desired = myCruise;
-            Vector2Int upcoming = cell + gridDir;
-            bool nearInter = IsIntersection(upcoming) && dist < arriveDist * 2.2f;
+            int nextNode = segDir > 0 ? net.SegmentAt(seg).b : net.SegmentAt(seg).a;
+            float toNode = segDir > 0 ? len - segPos : segPos;
+            // Un noeud de degre 2 n'est qu'un raccord de splines : ni feu ni priorite, sinon
+            // les voitures pileraient au milieu d'une ligne droite.
+            bool nearInter = net.NodeDegree(nextNode) >= 3
+                             && toNode < net.JunctionRadius(nextNode) + arriveDist * 2.2f;
 
             // ralentit a l'approche d'un carrefour (virage / prudence)
             if (nearInter) desired *= turnSlow;
+
+            // Cul-de-sac : le demi-tour se joue sur place, au bout de la voie. A pleine
+            // vitesse la voiture depasse le bout de rue de plusieurs metres avant d'avoir
+            // pivote (mesure : jusqu'a 8 m hors emprise) -- on ferme les gaz en approche.
+            //
+            // Le plancher n'est PAS cosmetique : le demi-tour se declenche quand l'abscisse
+            // DEPASSE le bout du segment, et l'abscisse n'avance qu'a la vitesse. Tomber a
+            // zero, c'est ne jamais atteindre le bout -- mesure avant plancher : 25 voitures
+            // sur 29 garees a vie en bout de rue.
+            if (net.NodeDegree(nextNode) <= 1)
+                desired *= Mathf.Max(0.25f, Mathf.Clamp01(toNode / (arriveDist * 4f)));
 
             // file d'attente : ralentit / s'arrete derriere la voiture devant.
             // (on ne teste QUE les autres voitures : les rampes se franchissent, les
@@ -528,81 +600,88 @@ namespace Gameplay
             // est deja prise par une autre voiture (priorite / stop).
             if (nearInter)
             {
-                if (!City.TrafficSignal.CanGo(gridDir)) desired = 0f;      // feu non vert
-                else if (!TryReserve(upcoming)) desired = 0f;             // priorite
+                if (!City.TrafficSignal.CanGo(AxisOf(TravelDirAt(seg, segPos, segDir)))) desired = 0f;
+                else if (!TryReserve(nextNode)) desired = 0f;
             }
 
             return desired;
         }
 
-        // ---- helpers grille ----
-        private bool IsRoad(Vector2Int c) => cityAuth.Grid.At(c.x, c.y) == City.CellType.Road;
+        // ---- helpers reseau ----
 
-        // Carrefour : cellule route traversee par les DEUX axes (on peut tourner).
-        private bool IsIntersection(Vector2Int c)
+        // Decalage vers la voie de DROITE (conduite a droite), en metres.
+        private float LaneOffset => net.RoadwayHalfWidth * laneFrac;
+
+        // Point de la voie de droite a l'abscisse `s` du segment `k` parcouru dans le sens `d`.
+        private Vector3 LanePoint(int k, float s, int d)
         {
-            if (!IsRoad(c)) return false;
-            bool ns = IsRoad(c + new Vector2Int(0, 1)) || IsRoad(c + new Vector2Int(0, -1));
-            bool ew = IsRoad(c + new Vector2Int(1, 0)) || IsRoad(c + new Vector2Int(-1, 0));
-            return ns && ew;
+            float len = net.SegmentLength(k);
+            if (!net.SampleSegment(k, Mathf.Clamp(s, 0f, len), out Vector3 axis, out Vector3 tan, out _))
+                return transform.position;
+            return axis + Vector3.Cross(Vector3.up, tan * d) * LaneOffset;
         }
 
-        // Grille -> monde : +x = +X, +y = -Z (cf. CityGrid.CellToWorld).
-        private Vector3 DirToWorld(Vector2Int d) => new Vector3(d.x, 0f, -d.y).normalized;
-        private Vector3 CellCenterWorld(Vector2Int c) =>
-            cityAuth.transform.TransformPoint(cityAuth.Grid.CellToWorld(c.x, c.y));
-        // Decalage vers la voie de DROITE (conduite a droite) pour une direction donnee.
-        private Vector3 RightLaneOffset(Vector2Int d) =>
-            Vector3.Cross(Vector3.up, DirToWorld(d)) * (cityAuth.CellSize * laneFrac);
-        private Vector3 WaypointFor(Vector2Int c, Vector2Int d) =>
-            CellCenterWorld(c + d) + RightLaneOffset(d);
-
-        // Direction initiale : parmi les voisins route, celle la plus alignee au cap actuel.
-        private Vector2Int SnapDir(Vector2Int c)
+        // Sens de circulation (a plat, normalise) a l'abscisse `s`.
+        private Vector3 TravelDirAt(int k, float s, int d)
         {
-            Vector3 fwd = transform.forward; fwd.y = 0f;
-            if (fwd.sqrMagnitude > 1e-4f) fwd.Normalize();
-            Vector2Int best = GridDirs[0]; float bestDot = -2f;
-            foreach (var d in GridDirs)
+            float len = net.SegmentLength(k);
+            if (!net.SampleSegment(k, Mathf.Clamp(s, 0f, len), out _, out Vector3 tan, out _))
+                return transform.forward;
+            return tan * d;
+        }
+
+        // TrafficSignal raisonne en axes de grille : composante dominante = axe emprunte.
+        private static Vector2Int AxisOf(Vector3 travel) =>
+            Mathf.Abs(travel.x) >= Mathf.Abs(travel.z) ? new Vector2Int(1, 0) : new Vector2Int(0, 1);
+
+        // Choix de la suite au noeud `node` : tout droit privilegie (straightBias), sinon un
+        // virage au hasard, demi-tour seulement en cul-de-sac. Met a jour seg/segDir.
+        private bool StepThroughNode(int node)
+        {
+            var nb = net.NodeNeighbours(node);
+            if (nb.Count == 0) return false;
+            int from = segDir > 0 ? net.SegmentAt(seg).a : net.SegmentAt(seg).b;
+            Vector3 inDir = TravelDirAt(seg, segDir > 0 ? net.SegmentLength(seg) : 0f, segDir);
+            Vector3 nodePos = net.NodeWorld(node);
+
+            ScratchTurns.Clear();
+            int straight = -1; float bestDot = -2f;
+            foreach (int n in nb)
             {
-                if (!IsRoad(c + d)) continue;
-                float dot = Vector3.Dot(fwd, DirToWorld(d));
-                if (dot > bestDot) { bestDot = dot; best = d; }
+                if (n == from) continue;                 // demi-tour : reserve au cul-de-sac
+                int k = net.SegmentBetween(node, n);
+                if (k < 0) continue;
+                ScratchTurns.Add(k);
+                Vector3 outDir = net.NodeWorld(n) - nodePos; outDir.y = 0f;
+                if (outDir.sqrMagnitude < 1e-4f) continue;
+                float dot = Vector3.Dot(inDir, outDir.normalized);
+                if (dot > bestDot) { bestDot = dot; straight = k; }
             }
-            return best;
+
+            int pick;
+            if (ScratchTurns.Count == 0) pick = net.SegmentBetween(node, from);   // cul-de-sac
+            else if (straight >= 0 && (ScratchTurns.Count == 1 || Random.value < straightBias)) pick = straight;
+            else pick = ScratchTurns[Random.Range(0, ScratchTurns.Count)];
+            if (pick < 0) return false;
+
+            seg = pick;
+            segDir = net.SegmentAt(pick).a == node ? 1 : -1;
+            ReleaseInter();   // le carrefour est derriere nous
+            return true;
         }
 
-        // Choix a un carrefour : tout droit privilegie (straightBias), sinon un virage
-        // valide au hasard, jamais de demi-tour sauf cul-de-sac.
-        private Vector2Int ChooseDir(Vector2Int c, Vector2Int cur)
+        // ponytail: premier reseau non vide de la scene. A raffiner si un jour la ville en
+        // porte plusieurs disjoints -- il faudrait alors prendre le plus proche.
+        private static City.RoadNetwork FirstNetwork()
         {
-            bool straightOk = IsRoad(c + cur);
-            Vector2Int back = new Vector2Int(-cur.x, -cur.y);
-            var turns = new List<Vector2Int>();
-            foreach (var d in GridDirs)
-            {
-                if (d == cur || d == back) continue;
-                if (IsRoad(c + d)) turns.Add(d);
-            }
-            if (straightOk && (turns.Count == 0 || Random.value < straightBias)) return cur;
-            if (turns.Count > 0) return turns[Random.Range(0, turns.Count)];
-            if (straightOk) return cur;
-            return IsRoad(c + back) ? back : cur; // cul-de-sac : demi-tour
+            if (nets == null || nets.Length == 0 || nets[0] == null)
+                nets = FindObjectsByType<City.RoadNetwork>(FindObjectsSortMode.None);
+            foreach (var n in nets)
+                if (n != null && n.SegmentCount > 0) return n;
+            return null;
         }
 
-        private bool NearestRoad(Vector2Int from, out Vector2Int found)
-        {
-            for (int r = 1; r <= 2; r++)
-                for (int dy = -r; dy <= r; dy++)
-                    for (int dx = -r; dx <= r; dx++)
-                    {
-                        var c = new Vector2Int(from.x + dx, from.y + dy);
-                        if (cityAuth.Grid.At(c.x, c.y) == City.CellType.Road) { found = c; return true; }
-                    }
-            found = from; return false;
-        }
-
-        // Distance a la voiture qui ROULE devant, DANS MA VOIE (filtre lateral), sinon
+        // Distance au vehicule qui ROULE devant, DANS MA VOIE (filtre lateral), sinon
         // carFollowGap*1.5. On ignore les voitures garees (decor au trottoir, hors voie)
         // et celles des voies transverses/opposees.
         private bool IsCirculating => driver != null || autoDrive;
@@ -614,42 +693,43 @@ namespace Gameplay
             foreach (var c in Cars)
             {
                 if (c == this || c == null || !c.IsCirculating) continue;
-                Vector3 to = c.transform.position - transform.position; to.y = 0f;
-                float lon = Vector3.Dot(to, fwd);
-                if (lon <= 0.5f || lon >= best) continue;         // devant, dans la portee
-                if (Mathf.Abs(Vector3.Dot(to, right)) > 1.6f) continue; // dans ma voie
-                best = lon;
+                Gap(c.transform.position, fwd, right, ref best);
             }
+            // Le camion du joueur n'est pas dans Cars : sans lui, le trafic lui rentre dedans
+            // sans jamais lever le pied.
+            if (playerT != null) Gap(playerT.position, fwd, right, ref best);
             return best;
         }
 
-        // ---- priorite aux intersections (une voiture a la fois) ----
-        private bool TryReserve(Vector2Int inter)
+        // Retient `target` comme obstacle devant si elle est dans ma voie et plus proche que
+        // le meilleur candidat courant. Le filtre VERTICAL n'est pas cosmetique : le reseau
+        // est etage (ponts, rampes), et sans lui une voiture pile derriere une autre qui passe
+        // 10 m au-dessus d'elle.
+        private void Gap(Vector3 target, Vector3 fwd, Vector3 right, ref float best)
         {
-            if (reservedInter == inter) return true;
-            if (InterOwner.TryGetValue(inter, out var owner) && owner != null && owner != this) return false;
+            Vector3 to = target - transform.position;
+            if (Mathf.Abs(to.y) > 3f) return;                       // autre etage du reseau
+            to.y = 0f;
+            float lon = Vector3.Dot(to, fwd);
+            if (lon <= 0.5f || lon >= best) return;                 // devant, dans la portee
+            if (Mathf.Abs(Vector3.Dot(to, right)) > 1.6f) return;   // dans ma voie
+            best = lon;
+        }
+
+        // ---- priorite aux carrefours (une voiture a la fois) ----
+        private bool TryReserve(int node)
+        {
+            if (reservedNode == node) return true;
+            if (InterOwner.TryGetValue(node, out var owner) && owner != null && owner != this) return false;
             ReleaseInter();
-            InterOwner[inter] = this; reservedInter = inter; return true;
+            InterOwner[node] = this; reservedNode = node; return true;
         }
 
         private void ReleaseInter()
         {
-            if (reservedInter == NoCell) return;
-            if (InterOwner.TryGetValue(reservedInter, out var o) && o == this) InterOwner.Remove(reservedInter);
-            reservedInter = NoCell;
-        }
-
-        // Renvoie la distance au premier obstacle (feelerLength si rien), en ignorant soi-meme.
-        private float CastFeeler(Vector3 origin, float angleDeg)
-        {
-            Vector3 dir = Quaternion.Euler(0f, angleDeg, 0f) * transform.forward;
-            if (Physics.Raycast(origin, dir, out RaycastHit hit, feelerLength, obstacleMask, QueryTriggerInteraction.Ignore))
-            {
-                // ignore ses propres colliders
-                if (!hit.collider.transform.IsChildOf(transform))
-                    return hit.distance;
-            }
-            return feelerLength;
+            if (reservedNode < 0) return;
+            if (InterOwner.TryGetValue(reservedNode, out var o) && o == this) InterOwner.Remove(reservedNode);
+            reservedNode = -1;
         }
 
         private void SpinWheels(float dt)
@@ -662,15 +742,14 @@ namespace Gameplay
                 if (w) w.Rotate(Vector3.up, -deg, Space.Self);
         }
 
+        // Voie suivie et cible visee : le seul moyen de voir si une voiture s'est decrochee
+        // de sa spline sans lancer le jeu.
         private void OnDrawGizmosSelected()
         {
-            Vector3 origin = transform.position + Vector3.up * rayHeight + transform.forward * 1.2f;
+            if (!onRoad || net == null) return;
             Gizmos.color = Color.yellow;
-            foreach (float a in new[] { -sideAngle, 0f, sideAngle })
-            {
-                Vector3 dir = Quaternion.Euler(0f, a, 0f) * transform.forward;
-                Gizmos.DrawLine(origin, origin + dir * feelerLength);
-            }
+            Gizmos.DrawLine(transform.position, waypoint);
+            Gizmos.DrawWireSphere(waypoint, 0.4f);
         }
     }
 }
